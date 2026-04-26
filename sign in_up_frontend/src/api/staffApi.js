@@ -114,3 +114,20 @@ export function createStaffWebSocket(onMessage) {
   };
   return ws;
 }
+
+// ── Webhook Triggers ──────────────────────────────────────────
+export const callResponders = async () => {
+  const response = await fetch("https://aamrut.app.n8n.cloud/webhook/emergency-call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      location: "Hotel Sunshine",
+      ambulance_number: "+918600866956",
+      fire_number: "+917620888147"
+    })
+  });
+  if (!response.ok) {
+    throw new Error('Failed to trigger responder webhook');
+  }
+  return response.json().catch(() => ({}));
+};
