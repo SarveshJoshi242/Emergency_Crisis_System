@@ -1,0 +1,372 @@
+SMART EVACUATION SYSTEM — FIGMA PROTOTYPE (DARK UI + FULL BACKEND FLOW + ADVANCED ANIMATIONS)
+
+Design a high-fidelity, interactive Figma prototype for a guest evacuation system used in hotels. The design must simulate real backend behavior and provide a seamless emergency experience.
+
+The prototype should feel like a real app, not static screens.
+
+---
+
+## DESIGN STYLE (DARK EMERGENCY UI)
+
+Theme:
+
+* Background: #0B0F14 (deep dark)
+* Cards: #121821
+* Borders: subtle gray (#1F2937)
+
+Colors:
+
+* Danger (fire): #EF4444 (pulsing glow)
+* Warning: #F59E0B
+* Safe: #22C55E
+* Info: soft blue (#3B82F6)
+
+Typography:
+
+* Bold, high-contrast headings
+* Minimal text
+* Large readable instructions
+
+---
+
+## VISUAL FEEL
+
+* Futuristic + tactical (like emergency control system)
+* Soft neon glow accents
+* Subtle grid background
+* Depth using shadows and blur
+
+---
+
+CORE USER FLOW (MUST BE PROTOTYPED)
+
+1. Landing Screen
+2. Room Selection
+3. Session Initialization
+4. Safe Dashboard
+5. Emergency Trigger → Evacuation Mode
+6. Step-by-step Navigation
+7. Help / Reroute / Complete actions
+8. Safe Zone Confirmation
+
+---
+
+SCREEN DETAILS
+
+---
+
+1. LANDING SCREEN
+
+* Title: “Emergency Assistance System”
+* Button: “Start Evacuation”
+
+Animations:
+
+* Pulsing button glow
+* Background grid moving slowly
+
+---
+
+2. ROOM SELECTION (MODAL)
+
+* Dark modal with:
+
+  * Search bar
+  * Room list (Master Bedroom, Study Library, etc.)
+
+Interactions:
+
+* Select room → highlight
+* Click confirm → next screen
+
+Animation:
+
+* Slide-up modal
+* Smooth hover effect
+
+---
+
+3. SESSION INITIALIZATION
+
+* Message:
+  “Analyzing safest route…”
+
+Animation:
+
+* Circular scanning animation
+* Node network animation
+
+---
+
+4. SAFE DASHBOARD
+
+* Status: “No Active Emergency”
+* Calm green indicators
+
+---
+
+EMERGENCY TRIGGER (VERY IMPORTANT)
+
+Simulate backend:
+
+* After delay (or button click):
+  → Switch to emergency mode
+
+Animation:
+
+* Screen flashes red briefly
+* Alarm pulse effect
+
+---
+
+5. EVACUATION MODE (MAIN SCREEN)
+
+LAYOUT:
+
+LEFT:
+
+* HOTEL FLOOR MAP (SVG-style)
+
+RIGHT:
+
+* Instructions + controls
+
+---
+
+MAP DESIGN (CRITICAL)
+
+* Nodes:
+
+  * Rooms
+  * Corridors
+  * Stairs
+  * Exits
+
+* Connections:
+
+  * Lines between nodes
+
+---
+
+PATH VISUALIZATION
+
+* Glowing animated path
+* Moving dot (user position)
+
+Animation:
+
+* Path draws progressively
+* Dot moves step-by-step
+
+---
+
+DANGER VISUALS
+
+* Red overlay on unsafe areas
+* Blinking nodes for fire zones
+
+---
+
+AUTO FOLLOW EFFECT
+
+* Map pans to follow user
+
+---
+
+STEP CARD (CENTER)
+
+* Instruction:
+  “Move to Corridor A”
+
+* Step counter:
+  “Step 2 of 5”
+
+---
+
+ACTION BUTTONS
+
+* COMPLETE (green)
+* REROUTE (orange)
+* HELP (red)
+
+Animation:
+
+* Press → ripple effect
+* Hover → glow
+
+---
+
+INTERACTION LOGIC (SIMULATE BACKEND)
+
+---
+
+COMPLETE:
+→ Next step appears
+→ Map moves forward
+
+---
+
+REROUTE:
+→ Old path fades
+→ New path animates in
+→ Show:
+“Safer route found”
+
+---
+
+HELP:
+→ Show alert:
+“Help is on the way”
+→ User node turns red and pulses
+
+---
+
+6. LOCATION UPDATE FEATURE
+
+Modal:
+
+* “Where are you now?”
+* Select room/corridor
+
+This simulates:
+POST /guest/update-location
+
+---
+
+7. NOTIFICATION SYSTEM
+
+Top banner:
+
+* “DO NOT USE LIFT”
+* “Fire on floor 2”
+
+Animation:
+
+* Slide down
+* Shake slightly for urgency
+
+---
+
+8. PROGRESS TRACKER
+
+* Top progress bar:
+  “Step 2 of 5”
+* Smooth animation fill
+
+---
+
+9. SAFE ZONE SCREEN
+
+* Big green check icon
+* Text: “You are safe”
+
+Animation:
+
+* Glow expansion
+* Confetti or soft pulse
+
+---
+
+ADVANCED FEATURES (FOR HIGH IMPACT)
+
+---
+
+1. CROWD HEATMAP
+
+* Overlay:
+
+  * Red = crowded
+  * Green = clear
+
+---
+
+2. VOICE GUIDANCE
+
+* Toggle switch
+* Text animation:
+  “Turn right toward Exit A”
+
+---
+
+3. PANIC BUTTON (FLOATING)
+
+* Always visible
+
+Interaction:
+→ triggers help instantly
+
+---
+
+4. LOW VISIBILITY MODE
+
+* Blur/dim map
+* Highlight only safe path
+
+---
+
+5. MULTIPLE EXIT OPTIONS
+
+* Labels:
+
+  * Fastest
+  * Safest
+  * Least crowded
+
+---
+
+ANIMATIONS (KEY REQUIREMENT)
+
+Use Figma Smart Animate:
+
+* Path drawing transitions
+* Moving user dot
+* Modal transitions
+* Button feedback
+* Emergency pulsing
+* Screen transitions
+
+---
+
+COMPONENT SYSTEM
+
+Create reusable components:
+
+* Buttons (3 types)
+* Step cards
+* Map nodes
+* Notification banner
+* Modals
+
+---
+
+PROTOTYPE CONNECTIONS
+
+* Connect all screens
+* Simulate full journey
+* Include alternate paths:
+
+  * Reroute flow
+  * Help flow
+
+---
+
+IMPORTANT
+
+---
+
+* DO NOT use world maps
+* MUST show hotel floor layout
+* MUST simulate backend-driven behavior
+
+---
+
+FINAL OUTPUT
+
+---
+
+* Fully interactive Figma prototype
+* Dark, modern UI
+* Smooth animations
+* Complete backend feature mapping
+
+This should feel like a real emergency evacuation app used in a smart hotel system.

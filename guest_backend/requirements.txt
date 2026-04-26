@@ -1,0 +1,15 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+motor>=3.3.0
+pymongo>=4.6.0
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+python-dateutil>=2.8.2
+httpx>=0.27.0
+python-dotenv>=1.0.0
+certifi>=2024.0.0
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+PyJWT>=2.8.0          # JWT encode/decode
+bcrypt>=4.1.0          # password hashing
+email-validator>=2.1.0 # EmailStr in Pydantic

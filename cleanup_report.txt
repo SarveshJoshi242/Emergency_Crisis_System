@@ -1,0 +1,7 @@
+=== CLEANUP REPORT ===
+node_modules found: 0
+__pycache__ found: 0
+dist found: 0
+build found: 0
+uploads found: 0
+Cleanup completed
