@@ -310,7 +310,8 @@ async def resolve_help_request(
         raise HTTPException(status_code=400, detail="Invalid request_id format")
 
     col = get_collection("help_requests")
-    result = await col.update_one(
+    from pymongo import ReturnDocument
+    updated_doc = await col.find_one_and_update(
         {"_id": oid},
         {
             "$set": {
@@ -319,8 +320,9 @@ async def resolve_help_request(
                 "resolved_by": resolved_by,
             }
         },
+        return_document=ReturnDocument.AFTER
     )
-    if result.modified_count == 0:
+    if not updated_doc:
         raise HTTPException(status_code=404, detail="Help request not found or already resolved")
 
     # Real-time broadcast so both staff and guest receive instant update
@@ -328,6 +330,7 @@ async def resolve_help_request(
         from services.websocket_manager import manager
         await manager.broadcast("help_resolved", {
             "request_id": request_id,
+            "session_id": updated_doc.get("session_id"),
             "resolved_by": resolved_by,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
