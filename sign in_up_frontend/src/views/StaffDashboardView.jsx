@@ -1,468 +1,471 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  getAlerts, resolveAlert, getTasks, listFloors, createFloor,
-  deleteFloor, getFloorGraph, getHelpRequests, resolveHelpRequest,
-  broadcastMessage, getGuestSessions, staffLogout, getMe,
-  createStaffWebSocket,
+  getAlerts, resolveAlert, resolveAllAlerts, listFloors,
+  staffLogout, getMe, createStaffWebSocket, triggerDemo, startEmergency, getGuestSessions,
+  broadcastMessage, getHelpRequests, resolveHelpRequest, getTasks, completeTask
 } from '../api/staffApi'
 import FloorMapPanel from './staff/FloorMapPanel'
 
-const TABS = ['Alerts', 'Floor Map', 'Help Requests', 'Broadcast', 'Guests']
-
 export default function StaffDashboardView({ session, onLogout }) {
-  const [tab, setTab]             = useState('Alerts')
-  const [alerts, setAlerts]       = useState([])
-  const [tasks, setTasks]         = useState([])
-  const [floors, setFloors]       = useState([])
-  const [helpReqs, setHelpReqs]   = useState([])
-  const [sessions, setSessions]   = useState([])
-  const [liveEvents, setLiveEvents] = useState([])
-  const [me, setMe]               = useState(null)
-  const [loading, setLoading]     = useState(false)
-  const wsRef                     = useRef(null)
-  const refreshToken              = localStorage.getItem('staff_refresh_token')
+  const [alerts, setAlerts] = useState([])
+  const [floors, setFloors] = useState([])
+  const [tasks, setTasks] = useState([])
+  const [helpRequests, setHelpRequests] = useState([])
+  const [guestSessions, setGuestSessions] = useState([])
+  const [me, setMe] = useState(null)
+  
+  const [broadcastText, setBroadcastText] = useState('')
+  const [isBroadcasting, setIsBroadcasting] = useState(false)
 
-  // ── Initial data load ─────────────────────────────────────
+  // Tabs: overview, tasks, help, floors, map, ai
+  const [activeTab, setActiveTab] = useState('overview')
+
+  const wsRef = useRef(null)
+  
+  const activeAlerts = alerts.filter(a => a.status === 'ACTIVE' || a.status === 'open')
+  const pendingTasks = tasks.filter(t => t.status === 'pending')
+  const pendingHelp = helpRequests.filter(h => h.status === 'pending')
+  
+  const isEmergency = activeAlerts.length > 0 || tasks.length > 0
+  
   useEffect(() => {
     loadAll()
     getMe().then(setMe).catch(() => {})
-    // WebSocket
-    const ws = createStaffWebSocket(handleWsEvent)
-    wsRef.current = ws
-    return () => { try { ws.close() } catch {} }
+    setupWebSocket()
+    return () => { if (wsRef.current) wsRef.current.close() }
   }, [])
+
+  const setupWebSocket = () => {
+    const ws = createStaffWebSocket(handleWsEvent)
+    ws.onopen = () => console.log('WS Connected')
+    ws.onclose = () => setTimeout(setupWebSocket, 3000)
+    wsRef.current = ws
+  }
 
   const loadAll = useCallback(async () => {
-    setLoading(true)
     try {
-      const [a, t, f, h, s] = await Promise.allSettled([
-        getAlerts(), getTasks(), listFloors(), getHelpRequests(), getGuestSessions(),
+      const [a, f, g, t, h] = await Promise.all([
+        getAlerts(), 
+        listFloors(),
+        getGuestSessions().catch(() => []),
+        getTasks().catch(() => []),
+        getHelpRequests().catch(() => [])
       ])
-      if (a.status === 'fulfilled') setAlerts(a.value || [])
-      if (t.status === 'fulfilled') setTasks(t.value || [])
-      if (f.status === 'fulfilled') setFloors(f.value || [])
-      if (h.status === 'fulfilled') setHelpReqs(h.value || [])
-      if (s.status === 'fulfilled') setSessions(s.value || [])
-    } finally { setLoading(false) }
+      setAlerts(a || [])
+      setFloors(f || [])
+      setGuestSessions(g || [])
+      setTasks(t || [])
+      setHelpRequests(h || [])
+    } catch (e) {
+      console.error(e)
+    }
   }, [])
 
-  // ── Auto-refresh every 15s ────────────────────────────────
-  useEffect(() => {
-    const id = setInterval(loadAll, 15000)
-    return () => clearInterval(id)
-  }, [loadAll])
-
-  function handleWsEvent(evt) {
-    setLiveEvents(prev => [
-      { ...evt, _ts: new Date().toLocaleTimeString() },
-      ...prev.slice(0, 49),
-    ])
-    // Refresh relevant data on WS event
-    if (evt.type === 'alert' || evt.type === 'alert_created') {
-      getAlerts().then(setAlerts).catch(() => {})
-    }
-    if (evt.type === 'help_request') {
-      getHelpRequests().then(setHelpReqs).catch(() => {})
-    }
-    if (evt.type === 'safe_confirmation') {
-      getGuestSessions().then(setSessions).catch(() => {})
+  function handleWsEvent(msg) {
+    if (msg.event === 'new_alert') {
+      setAlerts(prev => [msg.data, ...prev])
+    } else if (msg.event === 'resolve_alert') {
+      setAlerts(prev => prev.map(a => a.id === msg.data.alert_id ? { ...a, status: 'RESOLVED' } : a))
+    } else if (msg.event === 'bulk_update' && msg.data.action === 'resolve_all') {
+      setAlerts(prev => prev.map(a => ({ ...a, status: 'RESOLVED' })))
+      setTasks([])
+    } else if (msg.event === 'task_assigned') {
+      setTasks(msg.data.tasks || [])
+    } else {
+      loadAll() // reload for help requests, safe confirmations, etc.
     }
   }
 
   async function handleLogout() {
-    try { if (refreshToken) await staffLogout(refreshToken) } catch {}
+    try { await staffLogout(localStorage.getItem('staff_refresh_token')) } catch {}
     onLogout()
   }
 
-  // ── Danger level from alerts ──────────────────────────────
-  const activeAlerts = alerts.filter(a => a.status === 'active' || a.status === 'open')
-  const isEmergency  = activeAlerts.length > 0
+  async function handleConfirm(alert) {
+    try {
+      await startEmergency(alert.room_id || alert.source_room, alert.floor || alert.floor_id, alert.type || "fire")
+      loadAll()
+      setActiveTab('tasks')
+    } catch(e) {
+      console.error("Failed to start emergency", e)
+    }
+  }
+
+  async function handleDismiss(id) {
+    await resolveAlert(id)
+  }
+
+  async function handleResolveAll() {
+    await resolveAllAlerts()
+    setTasks([])
+  }
+
+  async function handleCompleteTask(taskId) {
+    try {
+      await completeTask(taskId)
+      setTasks(prev => prev.map(t => (t.id === taskId || t._id === taskId) ? { ...t, status: 'done' } : t))
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  async function handleResolveHelp(id) {
+    try {
+      await resolveHelpRequest(id, me?.name || 'Staff')
+      setHelpRequests(prev => prev.map(h => (h.id === id || h._id === id) ? { ...h, status: 'resolved' } : h))
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  async function handleBroadcast(e) {
+    e.preventDefault()
+    if (!broadcastText.trim()) return
+    setIsBroadcasting(true)
+    try {
+      await broadcastMessage(broadcastText, 'info')
+      setBroadcastText('')
+      alert('Message broadcasted to all guests.')
+    } catch (err) {
+      alert('Broadcast failed: ' + err.message)
+    } finally {
+      setIsBroadcasting(false)
+    }
+  }
+
+  const sortedAlerts = [...activeAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
   return (
-    <div className="min-h-screen flex flex-col animate-fadeIn">
-      {/* Alert Banner */}
-      {isEmergency && (
-        <div className="alert-bar-danger">
-          🚨 EMERGENCY ACTIVE — {activeAlerts.length} alert{activeAlerts.length !== 1 ? 's' : ''} — Coordinate immediate response!
+    <div className="min-h-screen bg-[#0B0F19] text-slate-300 font-sans selection:bg-red-500/30 flex flex-col">
+      
+      {/* HEADER */}
+      <header className="px-6 py-4 flex items-center justify-between shrink-0 border-b border-[#1E293B]">
+        <div>
+          <h1 className="font-bold text-white tracking-wide text-xl">Smart Emergency Dashboard</h1>
+          <p className="text-sm text-slate-400 mt-1">{me?.name || session?.name || 'TestUser'} - {me?.email || session?.email || 'user@xyz.com'}</p>
         </div>
-      )}
-
-      {/* Top Nav */}
-      <header className="glass border-b border-slate-800 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-xl">🚨</span>
-          <div>
-            <h1 className="font-bold text-white text-sm">Emergency Management</h1>
-            <p className="text-slate-500 text-xs">Staff Dashboard</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {/* WS indicator */}
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
-            <span className={`w-2 h-2 rounded-full ${wsRef.current?.readyState === 1 ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-            Live
-          </div>
-
-          <div className="text-right hidden sm:block">
-            <p className="text-sm font-medium text-white">{me?.name || session?.name || 'Staff'}</p>
-            <p className="text-xs text-slate-400">{me?.email || session?.email || ''}</p>
-          </div>
-          <button id="btn-logout" onClick={handleLogout} className="btn-ghost text-xs px-3 py-1.5">
-            Sign out
+        <div className="flex items-center gap-4">
+          <button onClick={() => setActiveTab('map')} className="flex items-center gap-2 border border-slate-700 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg transition-colors text-sm font-medium">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            Floor Maps
+          </button>
+          <button onClick={loadAll} className="p-2 border border-slate-700 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
+          <button onClick={handleLogout} className="flex items-center gap-2 border border-slate-700 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg transition-colors text-sm font-medium">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+            Sign Out
           </button>
         </div>
       </header>
 
-      {/* Stats bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-6 py-4 border-b border-slate-800/50">
-        <StatCard icon="🚨" label="Active Alerts"  value={activeAlerts.length}         color="red" />
-        <StatCard icon="🆘" label="Help Requests"  value={helpReqs.filter(h => h.status === 'pending').length} color="yellow" />
-        <StatCard icon="🏨" label="Active Guests"  value={sessions.filter(s => s.status === 'active').length}  color="blue" />
-        <StatCard icon="🗺️"  label="Floors"         value={floors.length}               color="green" />
-      </div>
-
-      {/* Tab Nav */}
-      <div className="flex gap-1 px-6 py-3 border-b border-slate-800/50 overflow-x-auto">
-        {TABS.map(t => (
-          <button
-            key={t}
-            id={`tab-${t.toLowerCase().replace(/\s+/g, '-')}`}
-            onClick={() => setTab(t)}
-            className={tab === t ? 'nav-tab-active' : 'nav-tab-inactive'}
-          >
-            {t}
-          </button>
-        ))}
-        <button
-          onClick={loadAll}
-          className="nav-tab-inactive ml-auto"
-          title="Refresh"
-        >
-          {loading ? '⟳' : '↻'} Refresh
-        </button>
-      </div>
-
-      {/* Tab Content */}
-      <main className="flex-1 p-6 overflow-auto">
-        {tab === 'Alerts'       && <AlertsTab alerts={alerts} onResolve={id => resolveAlert(id).then(loadAll).catch(()=>{})} tasks={tasks} liveEvents={liveEvents} />}
-        {tab === 'Floor Map'    && <FloorMapPanel floors={floors} onRefresh={loadAll} />}
-        {tab === 'Help Requests'&& <HelpReqTab helpReqs={helpReqs} onResolve={id => resolveHelpRequest(id).then(loadAll).catch(()=>{})} />}
-        {tab === 'Broadcast'    && <BroadcastTab floors={floors} />}
-        {tab === 'Guests'       && <GuestsTab sessions={sessions} />}
-      </main>
-    </div>
-  )
-}
-
-
-// ── Stat Card ─────────────────────────────────────────────────
-function StatCard({ icon, label, value, color }) {
-  const colors = {
-    red:    'bg-red-900/20 border-red-800/30 text-red-300',
-    yellow: 'bg-yellow-900/20 border-yellow-800/30 text-yellow-300',
-    blue:   'bg-blue-900/20 border-blue-800/30 text-blue-300',
-    green:  'bg-emerald-900/20 border-emerald-800/30 text-emerald-300',
-  }
-  return (
-    <div className={`card-sm flex items-center gap-3 ${colors[color]}`}>
-      <span className="text-2xl">{icon}</span>
-      <div>
-        <p className="text-2xl font-bold">{value}</p>
-        <p className="text-xs opacity-70">{label}</p>
-      </div>
-    </div>
-  )
-}
-
-
-// ── Alerts Tab ────────────────────────────────────────────────
-function AlertsTab({ alerts, onResolve, tasks, liveEvents }) {
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 space-y-4">
-        <h2 className="text-base font-semibold text-white">Active Alerts</h2>
-        {alerts.length === 0 ? (
-          <div className="card-sm text-slate-400 text-sm text-center py-8">
-            ✅ No alerts — system nominal
-          </div>
-        ) : alerts.map(a => (
-          <AlertCard key={a.id || a._id} alert={a} onResolve={() => onResolve(a.id || a._id)} />
-        ))}
-
-        <h2 className="text-base font-semibold text-white mt-6">Open Tasks</h2>
-        {tasks.length === 0 ? (
-          <div className="card-sm text-slate-400 text-sm text-center py-6">No tasks</div>
-        ) : tasks.filter(t => t.status !== 'completed').map(t => (
-          <div key={t.id || t._id} className="card-sm flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-white">{t.description || t.type}</p>
-              <p className="text-xs text-slate-400 mt-0.5">Floor: {t.floor_id || '—'} · Room: {t.room_id || '—'}</p>
+      {/* EMERGENCY BANNER */}
+      {isEmergency && (
+        <div className="bg-[#4C101C] text-red-200 px-6 py-4 flex items-center justify-between border-b border-[#7F1D1D] shadow-[0_0_30px_rgba(220,38,38,0.1)]">
+          <div className="flex items-center gap-3">
+            <div className="animate-pulse">
+              <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 5a1 1 0 112 0v5a1 1 0 11-2 0V5zm1 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
             </div>
-            <span className={`badge ${t.priority === 'high' ? 'badge-red' : 'badge-yellow'}`}>
-              {t.priority || 'normal'}
-            </span>
+            <span className="font-bold tracking-widest text-sm">EMERGENCY ACTIVE — HIGH</span>
+            <span className="text-red-300/70 text-sm ml-2">Affected locations: System-wide Alert</span>
           </div>
-        ))}
-      </div>
-
-      {/* Live feed */}
-      <div>
-        <h2 className="text-base font-semibold text-white mb-3">Live Feed</h2>
-        <div className="glass rounded-xl p-4 h-[500px] overflow-y-auto space-y-2">
-          {liveEvents.length === 0 ? (
-            <p className="text-slate-500 text-xs text-center mt-4">Waiting for WebSocket events…</p>
-          ) : liveEvents.map((ev, i) => (
-            <div key={i} className="text-xs border-b border-slate-800/50 pb-2">
-              <span className="text-slate-500">{ev._ts}</span>
-              <span className="ml-2 badge badge-gray">{ev.type || 'event'}</span>
-              <pre className="text-slate-300 mt-1 whitespace-pre-wrap break-all text-[10px]">
-                {JSON.stringify(ev, null, 2).slice(0, 200)}
-              </pre>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-
-function AlertCard({ alert, onResolve }) {
-  const riskColors = {
-    HIGH:     'border-red-700 bg-red-950/40',
-    MEDIUM:   'border-yellow-700 bg-yellow-950/40',
-    LOW:      'border-blue-700 bg-blue-950/40',
-    CRITICAL: 'border-red-600 bg-red-950/60',
-  }
-  const risk = (alert.risk_level || alert.type || 'MEDIUM').toUpperCase()
-  const colorClass = riskColors[risk] || 'border-slate-700 bg-slate-900/40'
-
-  return (
-    <div className={`rounded-xl border p-4 ${colorClass}`}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`badge ${risk === 'HIGH' || risk === 'CRITICAL' ? 'badge-red' : risk === 'MEDIUM' ? 'badge-yellow' : 'badge-blue'}`}>
-              {risk}
-            </span>
-            <span className="text-white font-medium text-sm">{alert.message || alert.description || 'Emergency alert'}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-            {alert.floor_id && <span>Floor: {alert.floor_id}</span>}
-            {alert.source_room && <span>Room: {alert.source_room}</span>}
-            {alert.created_at && <span>{new Date(alert.created_at).toLocaleString()}</span>}
-          </div>
-        </div>
-        {alert.status !== 'resolved' && (
-          <button
-            id={`btn-resolve-${alert.id || alert._id}`}
-            onClick={onResolve}
-            className="btn-success text-xs px-3 py-1.5 shrink-0"
-          >
-            Resolve
+          <button onClick={handleResolveAll} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded font-bold transition-colors shadow-lg shadow-red-900/50 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+            Resolve All
           </button>
-        )}
-        {alert.status === 'resolved' && <span className="badge badge-green">Resolved</span>}
-      </div>
-    </div>
-  )
-}
-
-
-// ── Help Requests Tab ─────────────────────────────────────────
-function HelpReqTab({ helpReqs, onResolve }) {
-  const pending  = helpReqs.filter(h => h.status === 'pending')
-  const resolved = helpReqs.filter(h => h.status === 'resolved')
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-base font-semibold text-white mb-3">
-          Pending Requests <span className="badge badge-red ml-2">{pending.length}</span>
-        </h2>
-        {pending.length === 0 ? (
-          <div className="card-sm text-slate-400 text-sm text-center py-6">No pending help requests</div>
-        ) : (
-          <div className="space-y-3">
-            {pending.map(h => (
-              <HelpCard key={h.id} req={h} onResolve={() => onResolve(h.id)} />
-            ))}
-          </div>
-        )}
-      </div>
-      <div>
-        <h2 className="text-base font-semibold text-white mb-3">Resolved</h2>
-        {resolved.slice(0, 10).map(h => (
-          <HelpCard key={h.id} req={h} resolved />
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function HelpCard({ req, onResolve, resolved }) {
-  return (
-    <div className={`card-sm flex items-start justify-between gap-4 ${resolved ? 'opacity-50' : ''}`}>
-      <div className="flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="badge badge-yellow">Help Request</span>
-          <span className="text-sm text-white">{req.issue || 'Guest needs assistance'}</span>
         </div>
-        <div className="mt-1 text-xs text-slate-400 flex flex-wrap gap-x-3">
-          <span>Session: {req.session_id?.slice(0, 8)}…</span>
-          {req.current_node && <span>Location: {req.current_node}</span>}
-          {req.floor_id && <span>Floor: {req.floor_id}</span>}
-          {req.created_at && <span>{new Date(req.created_at).toLocaleString()}</span>}
-        </div>
-      </div>
-      {!resolved && (
-        <button
-          id={`btn-resolve-help-${req.id}`}
-          onClick={onResolve}
-          className="btn-success text-xs px-3 py-1.5 shrink-0"
-        >
-          Resolve
-        </button>
       )}
-    </div>
-  )
-}
 
-
-// ── Broadcast Tab ─────────────────────────────────────────────
-function BroadcastTab({ floors }) {
-  const [message,  setMessage]  = useState('')
-  const [priority, setPriority] = useState('info')
-  const [floorId,  setFloorId]  = useState('')
-  const [status,   setStatus]   = useState(null)   // 'ok' | 'err' | null
-  const [loading,  setLoading]  = useState(false)
-
-  async function handleBroadcast(e) {
-    e.preventDefault()
-    setLoading(true)
-    setStatus(null)
-    try {
-      await broadcastMessage(message, priority, floorId || null)
-      setStatus('ok')
-      setMessage('')
-    } catch {
-      setStatus('err')
-    } finally { setLoading(false) }
-  }
-
-  return (
-    <div className="max-w-lg">
-      <h2 className="text-base font-semibold text-white mb-4">Broadcast to Guests</h2>
-      <div className="card">
-        <form onSubmit={handleBroadcast} className="space-y-4">
-          <div>
-            <label className="label">Message</label>
-            <textarea
-              id="input-broadcast-msg"
-              className="input resize-none"
-              rows={3}
-              placeholder="Emergency update: all guests proceed to stairwell B…"
-              value={message}
-              onChange={e => setMessage(e.target.value)}
-              required
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Priority</label>
-              <select
-                id="select-priority"
-                className="input"
-                value={priority}
-                onChange={e => setPriority(e.target.value)}
-              >
-                <option value="info">Info</option>
-                <option value="warning">Warning</option>
-                <option value="critical">Critical</option>
-              </select>
+      <main className="p-8 flex-1 flex flex-col gap-8 max-w-7xl mx-auto w-full">
+        
+        {/* STAT CARDS */}
+        <div className="grid grid-cols-4 gap-6">
+          
+          {/* System Status */}
+          <div className={`p-5 rounded-xl border flex items-center gap-4 ${isEmergency ? 'bg-[#2A0E15] border-[#4C1D26]' : 'bg-[#0F1C18] border-[#133125]'}`}>
+            <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${isEmergency ? 'bg-[#5B1123] text-red-400' : 'bg-[#153D2E] text-emerald-400'}`}>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
             </div>
             <div>
-              <label className="label">Floor (optional)</label>
-              <select
-                id="select-floor-broadcast"
-                className="input"
-                value={floorId}
-                onChange={e => setFloorId(e.target.value)}
-              >
-                <option value="">All Floors</option>
-                {floors.map(f => (
-                  <option key={f.id} value={f.floor_id || f.id}>{f.name}</option>
-                ))}
-              </select>
+              <p className="text-[10px] font-bold tracking-widest text-slate-500 uppercase">System Status</p>
+              <h2 className={`text-2xl font-bold mt-1 leading-none ${isEmergency ? 'text-white' : 'text-white'}`}>
+                {isEmergency ? 'EMERGENCY' : 'ALL CLEAR'}
+              </h2>
+              <p className={`text-xs mt-1 font-medium ${isEmergency ? 'text-red-400' : 'text-emerald-500'}`}>{isEmergency ? 'HIGH' : 'No active threats'}</p>
             </div>
           </div>
 
-          {status === 'ok' && <p className="text-emerald-400 text-sm">✅ Message broadcast successfully</p>}
-          {status === 'err' && <p className="text-red-400 text-sm">❌ Failed to broadcast</p>}
+          {/* Active Alerts */}
+          <div className="bg-[#111A24] border border-[#1E293B] p-5 rounded-xl flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-lg flex items-center justify-center shrink-0 ${activeAlerts.length > 0 ? 'bg-orange-500/20 text-orange-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Active Alerts</p>
+              <h2 className="text-2xl font-bold mt-1 text-white leading-none">{activeAlerts.length}</h2>
+              <p className="text-xs text-slate-400 mt-1">{activeAlerts.length === 0 ? 'No alerts' : 'Requires attention'}</p>
+            </div>
+          </div>
 
-          <button
-            id="btn-send-broadcast"
-            type="submit"
-            disabled={loading || !message.trim()}
-            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Sending…' : '📢 Send Broadcast'}
+          {/* Active Guests */}
+          <div className="bg-[#111A24] border border-[#1E293B] p-5 rounded-xl flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Active Guests</p>
+              <h2 className="text-2xl font-bold mt-1 text-white leading-none">{guestSessions.length}</h2>
+              <p className="text-xs text-slate-400 mt-1">On-property sessions</p>
+            </div>
+          </div>
+
+          {/* Floors Mapped */}
+          <div className="bg-[#111A24] border border-[#1E293B] p-5 rounded-xl flex items-center gap-4">
+            <div className="w-12 h-12 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            </div>
+            <div>
+              <p className="text-[10px] font-bold tracking-widest text-slate-500 uppercase">Floors Mapped</p>
+              <h2 className="text-2xl font-bold mt-1 text-white leading-none">{floors.length}</h2>
+              <p className="text-xs text-slate-400 mt-1">Configured floors</p>
+            </div>
+          </div>
+
+        </div>
+
+        {/* TABS */}
+        <div className="flex items-center gap-6 border-b border-[#1E293B] pb-4">
+          <button onClick={() => setActiveTab('overview')} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${activeTab === 'overview' ? 'bg-[#FF003C] text-white shadow-[#FF003C]/30 shadow-lg' : 'text-slate-400 hover:text-slate-300'}`}>Overview</button>
+          <button onClick={() => setActiveTab('tasks')} className={`text-sm font-semibold transition-colors ${activeTab === 'tasks' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Tasks ({tasks.length})</button>
+          <button onClick={() => setActiveTab('help')} className={`text-sm font-semibold transition-colors ${activeTab === 'help' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Help Requests ({pendingHelp.length})</button>
+          <button onClick={() => setActiveTab('floors')} className={`text-sm font-semibold transition-colors ${activeTab === 'floors' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Floors</button>
+          <button onClick={() => setActiveTab('map')} className={`text-sm font-semibold transition-colors ${activeTab === 'map' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Floor Map</button>
+          
+          <button onClick={() => setActiveTab('ai')} className={`text-sm font-bold ml-4 px-4 py-1.5 rounded-full flex items-center gap-2 transition-all shadow-lg ${activeTab === 'ai' ? 'bg-[#FF003C] text-white shadow-[#FF003C]/30' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}`}>
+            🔥 AI Alerts
           </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-
-// ── Guests Tab ────────────────────────────────────────────────
-function GuestsTab({ sessions }) {
-  const active   = sessions.filter(s => s.status === 'active')
-  const safe     = sessions.filter(s => s.status === 'safe')
-  const other    = sessions.filter(s => s.status !== 'active' && s.status !== 'safe')
-
-  return (
-    <div className="space-y-6">
-      <h2 className="text-base font-semibold text-white">
-        Guest Sessions <span className="badge badge-blue ml-2">{sessions.length} total</span>
-      </h2>
-
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="card-sm text-center">
-          <p className="text-2xl font-bold text-yellow-300">{active.length}</p>
-          <p className="text-xs text-slate-400 mt-1">Active</p>
         </div>
-        <div className="card-sm text-center">
-          <p className="text-2xl font-bold text-emerald-300">{safe.length}</p>
-          <p className="text-xs text-slate-400 mt-1">Safe</p>
-        </div>
-        <div className="card-sm text-center">
-          <p className="text-2xl font-bold text-slate-300">{other.length}</p>
-          <p className="text-xs text-slate-400 mt-1">Other</p>
-        </div>
-      </div>
 
-      {/* Session list */}
-      <div className="space-y-2">
-        {sessions.slice(0, 50).map((s, i) => (
-          <div key={s.session_id || i} className="card-sm flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm text-white font-mono">{s.session_id?.slice(0, 12)}…</p>
-              <p className="text-xs text-slate-400">
-                Room: {s.room_id || '—'} · Floor: {s.floor_id || '—'} · Node: {s.current_node || '—'}
-              </p>
+        {/* TAB CONTENT */}
+        <div className="flex-1 rounded-xl flex flex-col">
+          
+          {/* OVERVIEW TAB */}
+          {activeTab === 'overview' && (
+            <div className="grid grid-cols-2 gap-6">
+              
+              {/* Active Alerts Panel */}
+              <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-96 overflow-y-auto">
+                <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                  <span className="text-yellow-500">⚠️</span> Active Alerts
+                </h3>
+                {sortedAlerts.length === 0 ? (
+                  <div className="flex items-center justify-center h-48 text-slate-500 text-sm">
+                    No active alerts — system nominal
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {sortedAlerts.map(a => (
+                      <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-lg p-4 flex items-center justify-between">
+                        <div>
+                          <p className="text-white font-bold text-sm">⚠️ {a.message || `Fire detected in Room ${a.room_id}`}</p>
+                          <p className="text-xs text-slate-400 mt-1">Floor: {a.floor_id} | Risk: {a.risk_level}</p>
+                        </div>
+                        <button onClick={() => handleDismiss(a.id)} className="bg-slate-800 text-slate-300 hover:text-white px-3 py-1 rounded text-xs font-bold border border-slate-700">Dismiss</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right Column: Broadcast & Guests */}
+              <div className="flex flex-col gap-6">
+                
+                {/* Broadcast Message */}
+                <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6">
+                  <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+                    <span className="text-blue-400">✈️</span> Broadcast Message to Guests
+                  </h3>
+                  <form onSubmit={handleBroadcast}>
+                    <textarea 
+                      value={broadcastText}
+                      onChange={e => setBroadcastText(e.target.value)}
+                      placeholder="Type a message to broadcast to all guests..."
+                      className="w-full bg-[#111A24] border border-[#1E293B] rounded-lg p-3 text-sm text-white focus:outline-none focus:border-blue-500 mb-4 h-24"
+                    />
+                    <button type="submit" disabled={isBroadcasting || !broadcastText.trim()} className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white font-bold py-2 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                      {isBroadcasting ? 'Sending...' : 'Send to All Guests'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Active Guest Sessions */}
+                <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-bold text-white flex items-center gap-2 mb-4 shrink-0">
+                    <span className="text-slate-400">👥</span> Active Guest Sessions
+                  </h3>
+                  <div className="overflow-y-auto space-y-2 pr-2">
+                    {guestSessions.length === 0 ? (
+                      <p className="text-slate-500 text-sm">No active guests.</p>
+                    ) : (
+                      guestSessions.map((session, i) => (
+                        <div key={i} className="flex items-center justify-between py-1 border-b border-[#1E293B]/50 last:border-0">
+                          <span className="text-sm font-medium text-slate-300">room_{session.room_id || 'unknown'}</span>
+                          <span className="bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded text-xs">active</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+              </div>
             </div>
-            <span className={`badge ${s.status === 'safe' ? 'badge-green' : s.status === 'active' ? 'badge-yellow' : 'badge-gray'}`}>
-              {s.status}
-            </span>
-          </div>
-        ))}
-        {sessions.length === 0 && (
-          <div className="card-sm text-slate-400 text-sm text-center py-6">No guest sessions</div>
-        )}
-      </div>
+          )}
+
+          {/* AI ALERTS TAB */}
+          {activeTab === 'ai' && (
+            <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between border-b border-[#1E293B] pb-4 mb-6 shrink-0">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <span className="text-yellow-500">🛡</span> AI Fire Alerts <span className="text-slate-500 font-normal text-xs ml-2">from YOLO Room Service</span>
+                </h3>
+                <button onClick={loadAll} className="text-slate-500 hover:text-white transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                </button>
+              </div>
+
+              {sortedAlerts.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center">
+                  <div className="w-16 h-16 border-2 border-emerald-900 rounded-full flex items-center justify-center mb-4">
+                    <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                  </div>
+                  <h4 className="text-white font-bold text-lg mb-2">No pending AI alerts</h4>
+                  <p className="text-sm text-slate-500">Run <code className="bg-[#1E293B] px-1.5 py-0.5 rounded text-xs text-slate-300">yolo_test_runner.py --video MKBAAG.mp4 --room 101 --floor 1</code> to simulate fire detection</p>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                  {sortedAlerts.map(a => (
+                    <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-xl p-6 shadow-lg shadow-red-900/10 flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                          <span className="text-xs font-bold text-red-400 tracking-wider">{a.risk_level === 'MEDIUM' ? 'MEDIUM RISK DETECTED' : 'HIGH RISK DETECTED'}</span>
+                        </div>
+                        <h4 className="text-2xl font-bold text-white mb-2">⚠️ {a.message || `Possible fire detected in Room ${a.room_id || a.source_room}`}</h4>
+                        <p className="text-slate-400 mb-6 font-medium">Confidence: {a.risk_level === 'MEDIUM' ? 'Medium' : a.risk_level || 'Medium'}</p>
+                        
+                        <div className="flex items-center gap-4">
+                          <button onClick={() => handleConfirm(a)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-lg font-bold transition-all shadow-lg hover:shadow-emerald-600/20">
+                            ✅ Confirm Emergency
+                          </button>
+                          <button onClick={() => handleDismiss(a.id)} className="bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-lg font-bold transition-all border border-slate-600">
+                            ❌ Dismiss
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-right text-slate-500 text-sm font-mono mt-1">
+                        {new Date(a.created_at).toLocaleTimeString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TASKS TAB */}
+          {activeTab === 'tasks' && (
+            <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between border-b border-[#1E293B] pb-4 mb-6 shrink-0">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <span className="text-blue-400">🧑‍🚒</span> Active Responder Tasks
+                </h3>
+              </div>
+              
+              {tasks.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-600">
+                  <p>No active emergency tasks</p>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  {tasks.map((task, idx) => {
+                    const isDone = task.status === 'done' || task.status === 'completed';
+                    return (
+                      <div key={task.id || task._id || idx} className={`bg-[#111A24] p-5 rounded-xl border flex items-center gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 ${isDone ? 'bg-emerald-900 text-emerald-400' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
+                          {isDone ? '✓' : idx + 1}
+                        </div>
+                        <div className="flex-1">
+                          <p className={`text-lg font-medium ${isDone ? 'text-slate-400 line-through' : 'text-white'}`}>
+                            {task.task || task.task_type || JSON.stringify(task)}
+                          </p>
+                          <p className="text-sm text-slate-500 mt-1">Status: {task.status} | Floor: {task.floor_id}</p>
+                        </div>
+                        {!isDone && (
+                          <button onClick={() => handleCompleteTask(task.id || task._id)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0">
+                            Resolve
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* HELP REQUESTS TAB */}
+          {activeTab === 'help' && (
+            <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-full flex flex-col">
+              <div className="flex items-center justify-between border-b border-[#1E293B] pb-4 mb-6 shrink-0">
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <span className="text-purple-400">✋</span> Guest Help Requests
+                </h3>
+              </div>
+              
+              {helpRequests.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-slate-600">
+                  <p>No active help requests</p>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  {helpRequests.map((req) => {
+                    const isDone = req.status === 'resolved';
+                    return (
+                      <div key={req.id || req._id} className={`bg-[#111A24] p-5 rounded-xl border flex items-center gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 ${isDone ? 'bg-emerald-900 text-emerald-400' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'}`}>
+                          {isDone ? '✓' : '!'}
+                        </div>
+                        <div className="flex-1">
+                          <p className={`text-lg font-medium ${isDone ? 'text-slate-400 line-through' : 'text-red-200'}`}>
+                            {req.issue}
+                          </p>
+                          <p className="text-sm text-slate-500 mt-1">Location: {req.current_node || req.room_id} | Floor: {req.floor_id}</p>
+                          <p className="text-xs text-slate-600 mt-1">Requested at: {new Date(req.created_at).toLocaleTimeString()}</p>
+                        </div>
+                        {!isDone && (
+                          <button onClick={() => handleResolveHelp(req.id || req._id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0">
+                            Resolve
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* FLOORS / MAP TAB */}
+          {(activeTab === 'floors' || activeTab === 'map') && (
+            <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-full overflow-y-auto">
+              <FloorMapPanel floors={floors} onRefresh={loadAll} />
+            </div>
+          )}
+
+        </div>
+      </main>
+
     </div>
   )
 }

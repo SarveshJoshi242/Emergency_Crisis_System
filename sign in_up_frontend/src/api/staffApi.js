@@ -44,12 +44,16 @@ export const staffLogout = (refresh_token) =>
 export const getMe = () => request('GET', '/auth/me');
 
 // ── Alerts ───────────────────────────────────────────────────
-export const getAlerts = () => request('GET', '/alerts/');
-export const resolveAlert = (id) => request('POST', `/alerts/${id}/resolve`);
+// ── Alerts ───────────────────────────────────────────────────
+export const getAlerts = () => request('GET', '/alerts/status');
+export const resolveAlert = (id) => request('POST', '/alerts/resolve', { alert_id: id });
+export const resolveAllAlerts = () => request('POST', '/alerts/resolve-all');
+export const triggerDemo = () => request('POST', '/alerts/demo');
+export const startEmergency = (roomId, floor, type) => request('POST', '/emergency/start', { room_id: roomId, floor, type });
 
 // ── Tasks ────────────────────────────────────────────────────
 export const getTasks = () => request('GET', '/tasks/');
-export const completeTask = (id) => request('PATCH', `/tasks/${id}/complete`);
+export const completeTask = (id) => request('POST', `/tasks/${id}/complete`);
 
 // ── Floors ───────────────────────────────────────────────────
 export const listFloors = () => request('GET', '/staff/floors');

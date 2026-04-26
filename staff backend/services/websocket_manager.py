@@ -42,7 +42,7 @@ class ConnectionManager:
     async def broadcast(self, event_type: str, data: dict):
         """Broadcast a typed message to every connected client."""
         payload = json.dumps(
-            {"type": event_type, "data": data},
+            {"event": event_type, "data": data},
             default=_serialize_payload,
         )
         dead: List[WebSocket] = []

@@ -1,0 +1,84 @@
+=================================================================
+  FIRE RISK PREDICTION SYSTEM — FULL TEST REPORT
+=================================================================
+
+[GROUP 1] density.compute_density()
+----------------------------------------
+  ✅ PASS  people=  0 → density=0.0000 [LOW]
+  ✅ PASS  people= 10 → density=0.2000 [LOW]
+  ✅ PASS  people= 15 → density=0.3000 [MEDIUM]
+  ✅ PASS  people= 25 → density=0.5000 [MEDIUM]
+  ✅ PASS  people= 35 → density=0.7000 [MEDIUM]
+  ✅ PASS  people= 36 → density=0.7200 [HIGH]
+  ✅ PASS  people= 50 → density=1.0000 [HIGH]
+  ✅ PASS  people=100 → density=2.0000 [HIGH]
+
+  [INFO] AREA_CONSTANT = 50.0
+
+[GROUP 2] risk_engine.evaluate_risk() — rule transitions
+----------------------------------------
+  ✅ PASS  No people, no fire                     → LOW      score=  0.0 | MONITOR
+  ✅ PASS  Crowd, no fire, low move               → LOW      score= 21.5 | MONITOR
+  ✅ PASS  Only high movement                     → MEDIUM   score= 21.0 | NOTIFY_STAFF
+  ✅ PASS  Only fire >0.5                         → MEDIUM   score= 31.0 | NOTIFY_STAFF
+  ✅ PASS  Fire>0.6 + MEDIUM density              → HIGH     score= 53.5 | ALERT
+  ✅ PASS  Fire>0.6 + HIGH density                → HIGH     score= 62.5 | ALERT
+  ✅ PASS  CRITICAL: all triggers                 → CRITICAL score= 81.5 | EVACUATE
+  ✅ PASS  CRITICAL boundary fire=0.71            → CRITICAL score= 71.7 | EVACUATE
+  ✅ PASS  fire=0.7 (not >0.7) → HIGH             → HIGH     score= 73.0 | ALERT
+
+[GROUP 3] movement.compute_movement() — synthetic frames
+----------------------------------------
+  ✅ PASS  Identical black frames → movement=0.0
+  ✅ PASS  Black vs bright frame  → movement=1.0000 (expect > 0.5)
+  ✅ PASS  prev_frame=None        → movement=0.0 (expect 0.0)
+  ✅ PASS  Half-different frames  → movement=0.5021 (expect ~0.5)
+
+[GROUP 4] Full integrated pipeline simulation
+----------------------------------------
+  Simulates exact flow: detection → movement → density → risk
+
+  Scenario A: No People
+    Input  : people=0 | fire=0.0 | move=0.0
+    Density: LOW (0.00)
+    Output : LOW | score=0.0 | MONITOR
+  ✅ PASS
+
+  Scenario B: Many People, No Fire
+    Input  : people=25 | fire=0.1 | move=0.4
+    Density: MEDIUM (0.50)
+    Output : LOW | score=28.0 | MONITOR
+  ✅ PASS
+
+  Scenario C: Fire + Crowd
+    Input  : people=35 | fire=0.75 | move=0.4
+    Density: MEDIUM (0.70)
+    Output : HIGH | score=66.5 | ALERT
+  ✅ PASS
+
+  Scenario D: Fire + Crowd + High Movement (CRITICAL)
+    Input  : people=40 | fire=0.85 | move=0.75
+    Density: HIGH (0.80)
+    Output : CRITICAL | score=81.5 | EVACUATE
+  ✅ PASS
+
+[GROUP 5] API Pydantic schema validation
+----------------------------------------
+  ✅ PASS  Valid payload → risk=CRITICAL score=81.5 action=EVACUATE
+  ✅ PASS  Negative fire_conf → ValidationError raised correctly
+  ✅ PASS  movement_score=1.5 → ValidationError raised correctly
+  ✅ PASS  Negative people_count → ValidationError raised correctly
+
+[GROUP 6] Score formula: (fire×50) + (density×30) + (move×20)
+----------------------------------------
+  ✅ PASS  fc=0.0 dv=0.0 mv=0.0 → score=0.0 (manual=0.0)
+  ✅ PASS  fc=1.0 dv=1.0 mv=1.0 → score=100.0 (manual=100.0)
+  ✅ PASS  fc=0.5 dv=0.5 mv=0.5 → score=50.0 (manual=50.0)
+  ✅ PASS  fc=0.85 dv=0.8 mv=0.75 → score=81.5 (manual=81.5)
+  ✅ PASS  fc=0.7 dv=0.36 mv=0.3 → score=51.8 (manual=51.8)
+
+=================================================================
+  TOTAL PASSED : 34
+  TOTAL FAILED : 0
+  RESULT       : ALL TESTS PASSED ✅
+=================================================================

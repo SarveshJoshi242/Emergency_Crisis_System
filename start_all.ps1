@@ -4,6 +4,10 @@ Write-Host ""
 Write-Host "============================================================"
 Write-Host "  Emergency Management System -- Startup"
 Write-Host "============================================================"
+Write-Host "[SETUP] Checking and installing Python dependencies..."
+pip install -r "$Root\staff backend\requirements.txt" | Out-Null
+pip install "pydantic[email]" | Out-Null
+Write-Host "[SETUP] Dependencies checked."
 Write-Host ""
 
 function Start-Service {
@@ -36,7 +40,7 @@ Start-Sleep -Milliseconds 600
 Start-Service `
     -Title   "Fire Risk API :8002" `
     -WorkDir "$Root\fire_risk" `
-    -Command "uvicorn api:app --host 0.0.0.0 --port 8002 --reload"
+    -Command "python -m uvicorn api:app --host 0.0.0.0 --port 8002 --reload"
 
 Start-Sleep -Milliseconds 600
 

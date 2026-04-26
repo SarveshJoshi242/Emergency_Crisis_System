@@ -7,14 +7,12 @@ from typing import List, Optional, Literal
 
 
 class AlertCreate(BaseModel):
-    floor_id: str
-    type: Literal["AUTO", "MANUAL"] = "MANUAL"
-    message: Optional[str] = None
-    risk_level: Optional[str] = None
-    # Room-level fields (optional — backward compatible)
-    source_room: Optional[str] = None
-    danger_zones: List[str] = Field(default_factory=list)
-    scope: Literal["floor", "room"] = "floor"
+    type: Literal["fire", "help"]
+    room_id: str
+    floor: str
+    risk_level: Literal["LOW", "MEDIUM", "HIGH"]
+    confidence: float
+    source: str
 
 
 class AlertResponse(BaseModel):

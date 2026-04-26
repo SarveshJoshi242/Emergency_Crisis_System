@@ -1,0 +1,13 @@
+MONGODB_URI= mongodb+srv://krishcantclick_db_user:password%40123@hospitalioty.jv1iute.mongodb.net/
+DB_NAME=emergency_db
+PORT=8001
+UPLOAD_DIR=uploads
+GEMINI_API_KEY=AIzaSyC6VrNaOEl9XyJfv7hn_NsLo7UB9xr4XaI
+
+# JWT Authentication
+# Generated with: python -c "import secrets; print(secrets.token_hex(64))"
+JWT_SECRET=a9f3c7e1b8d24f6a9c0e5d7b2f4a8c1e6d9b3f0a7c2e5b8d1f6a9c3e7b2d4f8
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES_STAFF=20
+ACCESS_TOKEN_EXPIRE_MINUTES_GUEST=10
+REFRESH_TOKEN_EXPIRE_HOURS=24

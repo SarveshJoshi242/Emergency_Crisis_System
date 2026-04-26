@@ -12,7 +12,10 @@ from pathlib import Path
 # ── Load .env file BEFORE any other imports ────────────────────────────────
 # This must happen before importing config and auth modules
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent / ".env")
+env_path = Path(__file__).parent / ".env"
+if not env_path.exists():
+    env_path = Path(__file__).parent / "env"
+load_dotenv(env_path)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,6 +40,7 @@ from routers import webhook                                # noqa: E402
 from routers import staff_floors                          # noqa: E402
 from routers import guest_bridge                          # noqa: E402
 from routers import yolo_alerts                           # noqa: E402
+from routers import emergency                             # noqa: E402
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -104,6 +108,7 @@ app.include_router(webhook.router)
 app.include_router(staff_floors.router)
 app.include_router(guest_bridge.router)  # guest ↔ staff bridge
 app.include_router(yolo_alerts.router)   # YOLO fire detection endpoints
+app.include_router(emergency.router)
 
 # ── Static file serving for uploads (floor plans, etc.) ──────────────────────
 # Serves everything under the uploads/ directory at /uploads/<path>
@@ -112,12 +117,11 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR, check_dir=False
 
 
 # ── Health check ─────────────────────────────────────────────────────────────
-@app.get("/", tags=["Health"])
+@app.get("/health", tags=["Health"])
 def health():
     return {
         "status":  "ok",
-        "service": "Smart Emergency Management Platform",
-        "version": "2.0.0",
+        "service": "staff"
     }
 
 

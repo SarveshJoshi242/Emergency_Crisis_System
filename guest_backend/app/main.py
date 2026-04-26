@@ -10,7 +10,10 @@ from pathlib import Path
 # ── Load .env file BEFORE any other imports ────────────────────────────────
 # This must happen before importing config and auth modules
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
+env_path = Path(__file__).parent.parent.parent / ".env"
+if not env_path.exists():
+    env_path = Path(__file__).parent.parent / "env"
+load_dotenv(env_path)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -124,8 +127,8 @@ async def root():
 async def health():
     """Health check endpoint."""
     return {
-        "status": "healthy",
-        "service": "guest-backend"
+        "status": "ok",
+        "service": "guest"
     }
 
 
