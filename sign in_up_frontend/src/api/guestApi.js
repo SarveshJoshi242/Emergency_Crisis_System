@@ -68,4 +68,4 @@ export const requestHelp = (session_id, current_node, issue) =>
 
 // ── Safe confirmation ────────────────────────────────────────
 export const confirmSafe = (session_id, final_location) =>
-  request('POST', '/guest/safe-confirmation', { session_id, final_location });
+  request('POST', '/guest/reached-safe-zone', { session_id, final_location });

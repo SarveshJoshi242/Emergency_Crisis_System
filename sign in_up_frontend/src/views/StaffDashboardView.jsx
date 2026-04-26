@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   getAlerts, resolveAlert, resolveAllAlerts, listFloors,
   staffLogout, getMe, createStaffWebSocket, triggerDemo, startEmergency, getGuestSessions,
-  broadcastMessage, getHelpRequests, resolveHelpRequest, getTasks, completeTask
+  broadcastMessage, getHelpRequests, resolveHelpRequest, getTasks, completeTask,
+  getPendingAIAlerts, confirmAIAlert, dismissAIAlert
 } from '../api/staffApi'
 import FloorMapPanel from './staff/FloorMapPanel'
 
@@ -12,10 +13,12 @@ export default function StaffDashboardView({ session, onLogout }) {
   const [tasks, setTasks] = useState([])
   const [helpRequests, setHelpRequests] = useState([])
   const [guestSessions, setGuestSessions] = useState([])
+  const [pendingAIAlerts, setPendingAIAlerts] = useState([])
   const [me, setMe] = useState(null)
   
   const [broadcastText, setBroadcastText] = useState('')
   const [isBroadcasting, setIsBroadcasting] = useState(false)
+  const [confirmingAlertId, setConfirmingAlertId] = useState(null)
 
   // Tabs: overview, tasks, help, floors, map, ai
   const [activeTab, setActiveTab] = useState('overview')
@@ -23,10 +26,10 @@ export default function StaffDashboardView({ session, onLogout }) {
   const wsRef = useRef(null)
   
   const activeAlerts = alerts.filter(a => a.status === 'ACTIVE' || a.status === 'open')
-  const pendingTasks = tasks.filter(t => t.status === 'pending')
+  const pendingTasks = tasks.filter(t => t.status !== 'done' && t.status !== 'completed')
   const pendingHelp = helpRequests.filter(h => h.status === 'pending')
   
-  const isEmergency = activeAlerts.length > 0 || tasks.length > 0
+  const isEmergency = activeAlerts.length > 0
   
   useEffect(() => {
     loadAll()
@@ -44,18 +47,20 @@ export default function StaffDashboardView({ session, onLogout }) {
 
   const loadAll = useCallback(async () => {
     try {
-      const [a, f, g, t, h] = await Promise.all([
+      const [a, f, g, t, h, ai] = await Promise.all([
         getAlerts(), 
         listFloors(),
         getGuestSessions().catch(() => []),
         getTasks().catch(() => []),
-        getHelpRequests().catch(() => [])
+        getHelpRequests().catch(() => []),
+        getPendingAIAlerts().catch(() => [])
       ])
       setAlerts(a || [])
       setFloors(f || [])
       setGuestSessions(g || [])
       setTasks(t || [])
       setHelpRequests(h || [])
+      setPendingAIAlerts(ai || [])
     } catch (e) {
       console.error(e)
     }
@@ -63,7 +68,9 @@ export default function StaffDashboardView({ session, onLogout }) {
 
   function handleWsEvent(msg) {
     if (msg.event === 'new_alert') {
-      setAlerts(prev => [msg.data, ...prev])
+      setAlerts(prev => prev.some(a => a.id === msg.data.id) ? prev : [msg.data, ...prev])
+    } else if (msg.event === 'ai_fire_alert') {
+      setPendingAIAlerts(prev => prev.some(a => a.id === msg.data.id) ? prev : [msg.data, ...prev])
     } else if (msg.event === 'resolve_alert') {
       setAlerts(prev => prev.map(a => a.id === msg.data.alert_id ? { ...a, status: 'RESOLVED' } : a))
     } else if (msg.event === 'bulk_update' && msg.data.action === 'resolve_all') {
@@ -82,17 +89,41 @@ export default function StaffDashboardView({ session, onLogout }) {
   }
 
   async function handleConfirm(alert) {
+    setConfirmingAlertId(alert.id || alert._id)
     try {
-      await startEmergency(alert.room_id || alert.source_room, alert.floor || alert.floor_id, alert.type || "fire")
-      loadAll()
-      setActiveTab('tasks')
+      if (alert.state === 'pending' || alert.source === 'yolo') {
+        await confirmAIAlert(alert.id || alert._id)
+        setConfirmingAlertId('confirmed_' + (alert.id || alert._id))
+        setTimeout(() => {
+          setPendingAIAlerts(prev => prev.filter(a => a.id !== alert.id))
+          loadAll()
+          setActiveTab('tasks')
+          setConfirmingAlertId(null)
+        }, 1500)
+      } else {
+        await startEmergency(alert.room_id || alert.source_room, alert.floor || alert.floor_id, alert.type || "fire")
+        loadAll()
+        setActiveTab('tasks')
+        setConfirmingAlertId(null)
+      }
     } catch(e) {
       console.error("Failed to start emergency", e)
+      window.alert("Failed to confirm emergency. Please try again.")
+      setConfirmingAlertId(null)
     }
   }
 
-  async function handleDismiss(id) {
-    await resolveAlert(id)
+  async function handleDismiss(alert) {
+    try {
+      if (alert.state === 'pending' || alert.source === 'yolo') {
+        await dismissAIAlert(alert.id || alert._id)
+        setPendingAIAlerts(prev => prev.filter(a => a.id !== alert.id))
+      } else {
+        await resolveAlert(alert.id || alert._id)
+      }
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   async function handleResolveAll() {
@@ -133,18 +164,19 @@ export default function StaffDashboardView({ session, onLogout }) {
     }
   }
 
-  const sortedAlerts = [...activeAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  const sortedAlerts = [...activeAlerts, ...pendingAIAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  const sortedAIAlerts = [...pendingAIAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
   return (
     <div className="min-h-screen bg-[#0B0F19] text-slate-300 font-sans selection:bg-red-500/30 flex flex-col">
       
       {/* HEADER */}
-      <header className="px-6 py-4 flex items-center justify-between shrink-0 border-b border-[#1E293B]">
+      <header className="px-4 md:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between shrink-0 border-b border-[#1E293B] gap-4">
         <div>
           <h1 className="font-bold text-white tracking-wide text-xl">Smart Emergency Dashboard</h1>
           <p className="text-sm text-slate-400 mt-1">{me?.name || session?.name || 'TestUser'} - {me?.email || session?.email || 'user@xyz.com'}</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4 flex-wrap">
           <button onClick={() => setActiveTab('map')} className="flex items-center gap-2 border border-slate-700 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg transition-colors text-sm font-medium">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
             Floor Maps
@@ -161,25 +193,27 @@ export default function StaffDashboardView({ session, onLogout }) {
 
       {/* EMERGENCY BANNER */}
       {isEmergency && (
-        <div className="bg-[#4C101C] text-red-200 px-6 py-4 flex items-center justify-between border-b border-[#7F1D1D] shadow-[0_0_30px_rgba(220,38,38,0.1)]">
-          <div className="flex items-center gap-3">
-            <div className="animate-pulse">
-              <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 5a1 1 0 112 0v5a1 1 0 11-2 0V5zm1 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+        <div className="bg-[#4C101C] text-red-200 px-4 md:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between border-b border-[#7F1D1D] shadow-[0_0_30px_rgba(220,38,38,0.1)] gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+            <div className="flex items-center gap-2">
+              <div className="animate-pulse shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 5a1 1 0 112 0v5a1 1 0 11-2 0V5zm1 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+              </div>
+              <span className="font-bold tracking-widest text-sm">EMERGENCY ACTIVE — HIGH</span>
             </div>
-            <span className="font-bold tracking-widest text-sm">EMERGENCY ACTIVE — HIGH</span>
-            <span className="text-red-300/70 text-sm ml-2">Affected locations: System-wide Alert</span>
+            <span className="text-red-300/70 text-sm sm:ml-2">Affected locations: System-wide Alert</span>
           </div>
-          <button onClick={handleResolveAll} className="bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded font-bold transition-colors shadow-lg shadow-red-900/50 flex items-center gap-2">
+          <button onClick={handleResolveAll} className="w-full md:w-auto bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded font-bold transition-colors shadow-lg shadow-red-900/50 flex items-center justify-center gap-2 shrink-0">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
             Resolve All
           </button>
         </div>
       )}
 
-      <main className="p-8 flex-1 flex flex-col gap-8 max-w-7xl mx-auto w-full">
+      <main className="p-4 md:p-8 flex-1 flex flex-col gap-6 md:gap-8 max-w-7xl mx-auto w-full overflow-x-hidden">
         
         {/* STAT CARDS */}
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           
           {/* System Status */}
           <div className={`p-5 rounded-xl border flex items-center gap-4 ${isEmergency ? 'bg-[#2A0E15] border-[#4C1D26]' : 'bg-[#0F1C18] border-[#133125]'}`}>
@@ -234,13 +268,11 @@ export default function StaffDashboardView({ session, onLogout }) {
         </div>
 
         {/* TABS */}
-        <div className="flex items-center gap-6 border-b border-[#1E293B] pb-4">
+        <div className="flex items-center gap-4 md:gap-6 border-b border-[#1E293B] pb-4 overflow-x-auto whitespace-nowrap custom-scrollbar">
           <button onClick={() => setActiveTab('overview')} className={`px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${activeTab === 'overview' ? 'bg-[#FF003C] text-white shadow-[#FF003C]/30 shadow-lg' : 'text-slate-400 hover:text-slate-300'}`}>Overview</button>
           <button onClick={() => setActiveTab('tasks')} className={`text-sm font-semibold transition-colors ${activeTab === 'tasks' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Tasks ({tasks.length})</button>
           <button onClick={() => setActiveTab('help')} className={`text-sm font-semibold transition-colors ${activeTab === 'help' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Help Requests ({pendingHelp.length})</button>
           <button onClick={() => setActiveTab('floors')} className={`text-sm font-semibold transition-colors ${activeTab === 'floors' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Floors</button>
-          <button onClick={() => setActiveTab('map')} className={`text-sm font-semibold transition-colors ${activeTab === 'map' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}>Floor Map</button>
-          
           <button onClick={() => setActiveTab('ai')} className={`text-sm font-bold ml-4 px-4 py-1.5 rounded-full flex items-center gap-2 transition-all shadow-lg ${activeTab === 'ai' ? 'bg-[#FF003C] text-white shadow-[#FF003C]/30' : 'bg-red-500/10 text-red-500 hover:bg-red-500/20'}`}>
             🔥 AI Alerts
           </button>
@@ -251,10 +283,10 @@ export default function StaffDashboardView({ session, onLogout }) {
           
           {/* OVERVIEW TAB */}
           {activeTab === 'overview' && (
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               
               {/* Active Alerts Panel */}
-              <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-96 overflow-y-auto">
+              <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 min-h-[250px] lg:h-[500px] overflow-y-auto">
                 <h3 className="font-bold text-white flex items-center gap-2 mb-4">
                   <span className="text-yellow-500">⚠️</span> Active Alerts
                 </h3>
@@ -265,12 +297,31 @@ export default function StaffDashboardView({ session, onLogout }) {
                 ) : (
                   <div className="space-y-4">
                     {sortedAlerts.map(a => (
-                      <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-lg p-4 flex items-center justify-between">
-                        <div>
-                          <p className="text-white font-bold text-sm">⚠️ {a.message || `Fire detected in Room ${a.room_id}`}</p>
-                          <p className="text-xs text-slate-400 mt-1">Floor: {a.floor_id} | Risk: {a.risk_level}</p>
+                      <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-white font-bold text-sm truncate">⚠️ {a.message || `Fire detected in Room ${a.room_id || a.source_room}`}</p>
+                          <p className="text-xs text-slate-400 mt-1">Floor: {a.floor_id} | Risk: {a.risk_level || 'HIGH'}</p>
                         </div>
-                        <button onClick={() => handleDismiss(a.id)} className="bg-slate-800 text-slate-300 hover:text-white px-3 py-1 rounded text-xs font-bold border border-slate-700">Dismiss</button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {a.state === 'pending' ? (
+                            <button 
+                              onClick={() => handleConfirm(a)} 
+                              disabled={confirmingAlertId === (a.id || a._id) || confirmingAlertId === 'confirmed_' + (a.id || a._id)}
+                              className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${
+                                confirmingAlertId === 'confirmed_' + (a.id || a._id)
+                                ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.5)] border border-emerald-400'
+                                : confirmingAlertId === (a.id || a._id) 
+                                ? 'bg-emerald-800 text-emerald-400 cursor-not-allowed border border-emerald-700/50' 
+                                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg'
+                              }`}
+                            >
+                              {confirmingAlertId === 'confirmed_' + (a.id || a._id) ? '✅ Confirmed!' : confirmingAlertId === (a.id || a._id) ? '⏳ Starting...' : '✅ Confirm'}
+                            </button>
+                          ) : null}
+                          {confirmingAlertId !== 'confirmed_' + (a.id || a._id) && (
+                            <button onClick={() => handleDismiss(a)} className="bg-slate-800 text-slate-300 hover:text-white px-3 py-1.5 rounded text-xs font-bold border border-slate-700">Dismiss</button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -278,7 +329,7 @@ export default function StaffDashboardView({ session, onLogout }) {
               </div>
 
               {/* Right Column: Broadcast & Guests */}
-              <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-6 lg:h-[500px]">
                 
                 {/* Broadcast Message */}
                 <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6">
@@ -300,7 +351,7 @@ export default function StaffDashboardView({ session, onLogout }) {
                 </div>
 
                 {/* Active Guest Sessions */}
-                <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 flex-1 overflow-hidden flex flex-col">
+                <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 flex-1 overflow-hidden flex flex-col max-h-[350px] lg:max-h-none">
                   <h3 className="font-bold text-white flex items-center gap-2 mb-4 shrink-0">
                     <span className="text-slate-400">👥</span> Active Guest Sessions
                   </h3>
@@ -309,9 +360,9 @@ export default function StaffDashboardView({ session, onLogout }) {
                       <p className="text-slate-500 text-sm">No active guests.</p>
                     ) : (
                       guestSessions.map((session, i) => (
-                        <div key={i} className="flex items-center justify-between py-1 border-b border-[#1E293B]/50 last:border-0">
-                          <span className="text-sm font-medium text-slate-300">room_{session.room_id || 'unknown'}</span>
-                          <span className="bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded text-xs">active</span>
+                        <div key={i} className="flex items-center justify-between py-1 border-b border-[#1E293B]/50 last:border-0 gap-2 overflow-hidden">
+                          <span className="text-sm font-medium text-slate-300 truncate">room_{session.room_id || 'unknown'}</span>
+                          <span className="bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded text-xs shrink-0">active</span>
                         </div>
                       ))
                     )}
@@ -334,7 +385,7 @@ export default function StaffDashboardView({ session, onLogout }) {
                 </button>
               </div>
 
-              {sortedAlerts.length === 0 ? (
+              {sortedAIAlerts.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center">
                   <div className="w-16 h-16 border-2 border-emerald-900 rounded-full flex items-center justify-center mb-4">
                     <svg className="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
@@ -344,26 +395,38 @@ export default function StaffDashboardView({ session, onLogout }) {
                 </div>
               ) : (
                 <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                  {sortedAlerts.map(a => (
-                    <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-xl p-6 shadow-lg shadow-red-900/10 flex items-start justify-between">
-                      <div>
+                  {sortedAIAlerts.map(a => (
+                    <div key={a.id} className="bg-[#181014] border border-[#4C1D26] rounded-xl p-4 md:p-6 shadow-lg shadow-red-900/10 flex flex-col md:flex-row md:items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                          <span className="text-xs font-bold text-red-400 tracking-wider">{a.risk_level === 'MEDIUM' ? 'MEDIUM RISK DETECTED' : 'HIGH RISK DETECTED'}</span>
+                          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0"></span>
+                          <span className="text-[10px] md:text-xs font-bold text-red-400 tracking-wider truncate">{a.risk_level === 'MEDIUM' || a.risk === 'MEDIUM' ? 'MEDIUM RISK DETECTED' : 'HIGH RISK DETECTED'}</span>
                         </div>
-                        <h4 className="text-2xl font-bold text-white mb-2">⚠️ {a.message || `Possible fire detected in Room ${a.room_id || a.source_room}`}</h4>
-                        <p className="text-slate-400 mb-6 font-medium">Confidence: {a.risk_level === 'MEDIUM' ? 'Medium' : a.risk_level || 'Medium'}</p>
+                        <h4 className="text-lg md:text-2xl font-bold text-white mb-2 break-words">⚠️ {a.message || `Possible fire detected in Room ${a.room_id || a.source_room}`}</h4>
+                        <p className="text-sm md:text-base text-slate-400 mb-4 md:mb-6 font-medium">Confidence: {a.risk_level === 'MEDIUM' || a.risk === 'MEDIUM' ? 'Medium' : a.risk_level || a.risk || 'Medium'}</p>
                         
-                        <div className="flex items-center gap-4">
-                          <button onClick={() => handleConfirm(a)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-lg font-bold transition-all shadow-lg hover:shadow-emerald-600/20">
-                            ✅ Confirm Emergency
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
+                          <button 
+                            onClick={() => handleConfirm(a)} 
+                            disabled={confirmingAlertId === (a.id || a._id) || confirmingAlertId === 'confirmed_' + (a.id || a._id)}
+                            className={`px-4 md:px-8 py-3 rounded-lg font-bold text-sm md:text-base transition-all text-center ${
+                              confirmingAlertId === 'confirmed_' + (a.id || a._id)
+                              ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.5)] border border-emerald-400'
+                              : confirmingAlertId === (a.id || a._id) 
+                              ? 'bg-emerald-800 text-emerald-400 cursor-not-allowed border border-emerald-700/50' 
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg hover:shadow-emerald-600/20'
+                            }`}
+                          >
+                            {confirmingAlertId === 'confirmed_' + (a.id || a._id) ? '✅ Confirmed!' : confirmingAlertId === (a.id || a._id) ? '⏳ Starting Evacuation...' : '✅ Confirm Emergency'}
                           </button>
-                          <button onClick={() => handleDismiss(a.id)} className="bg-slate-800 hover:bg-slate-700 text-white px-8 py-3 rounded-lg font-bold transition-all border border-slate-600">
-                            ❌ Dismiss
-                          </button>
+                          {confirmingAlertId !== 'confirmed_' + (a.id || a._id) && (
+                            <button onClick={() => handleDismiss(a)} className="bg-slate-800 hover:bg-slate-700 text-white px-4 md:px-8 py-3 rounded-lg font-bold text-sm md:text-base transition-all border border-slate-600 text-center">
+                              ❌ Dismiss
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <div className="text-right text-slate-500 text-sm font-mono mt-1">
+                      <div className="text-left md:text-right text-slate-500 text-xs md:text-sm font-mono shrink-0">
                         {new Date(a.created_at).toLocaleTimeString()}
                       </div>
                     </div>
@@ -376,7 +439,7 @@ export default function StaffDashboardView({ session, onLogout }) {
           {/* TASKS TAB */}
           {activeTab === 'tasks' && (
             <div className="bg-[#0F1523] border border-[#1E293B] rounded-xl p-6 h-full flex flex-col">
-              <div className="flex items-center justify-between border-b border-[#1E293B] pb-4 mb-6 shrink-0">
+              <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-[#1E293B] pb-4 mb-6 shrink-0 gap-4">
                 <h3 className="font-bold text-white flex items-center gap-2">
                   <span className="text-blue-400">🧑‍🚒</span> Active Responder Tasks
                 </h3>
@@ -387,22 +450,22 @@ export default function StaffDashboardView({ session, onLogout }) {
                   <p>No active emergency tasks</p>
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto space-y-4">
+                <div className="overflow-y-auto space-y-4 max-h-[600px] pr-2 custom-scrollbar">
                   {tasks.map((task, idx) => {
                     const isDone = task.status === 'done' || task.status === 'completed';
                     return (
-                      <div key={task.id || task._id || idx} className={`bg-[#111A24] p-5 rounded-xl border flex items-center gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
+                      <div key={task.id || task._id || idx} className={`bg-[#111A24] p-4 md:p-5 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-3 md:gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 ${isDone ? 'bg-emerald-900 text-emerald-400' : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'}`}>
                           {isDone ? '✓' : idx + 1}
                         </div>
-                        <div className="flex-1">
-                          <p className={`text-lg font-medium ${isDone ? 'text-slate-400 line-through' : 'text-white'}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-lg font-medium break-words ${isDone ? 'text-slate-400 line-through' : 'text-white'}`}>
                             {task.task || task.task_type || JSON.stringify(task)}
                           </p>
-                          <p className="text-sm text-slate-500 mt-1">Status: {task.status} | Floor: {task.floor_id}</p>
+                          <p className="text-sm text-slate-500 mt-1 truncate">Status: {task.status} | Floor: {task.floor_id}</p>
                         </div>
                         {!isDone && (
-                          <button onClick={() => handleCompleteTask(task.id || task._id)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0">
+                          <button onClick={() => handleCompleteTask(task.id || task._id)} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0 w-full sm:w-auto">
                             Resolve
                           </button>
                         )}
@@ -428,23 +491,23 @@ export default function StaffDashboardView({ session, onLogout }) {
                   <p>No active help requests</p>
                 </div>
               ) : (
-                <div className="flex-1 overflow-y-auto space-y-4">
+                <div className="overflow-y-auto space-y-4 max-h-[600px] pr-2 custom-scrollbar">
                   {helpRequests.map((req) => {
                     const isDone = req.status === 'resolved';
                     return (
-                      <div key={req.id || req._id} className={`bg-[#111A24] p-5 rounded-xl border flex items-center gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
+                      <div key={req.id || req._id} className={`bg-[#111A24] p-4 md:p-5 rounded-xl border flex flex-col sm:flex-row sm:items-center gap-3 md:gap-5 transition-all ${isDone ? 'border-emerald-900/50 opacity-50' : 'border-[#1E293B]'}`}>
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0 ${isDone ? 'bg-emerald-900 text-emerald-400' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'}`}>
                           {isDone ? '✓' : '!'}
                         </div>
-                        <div className="flex-1">
-                          <p className={`text-lg font-medium ${isDone ? 'text-slate-400 line-through' : 'text-red-200'}`}>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-lg font-medium break-words ${isDone ? 'text-slate-400 line-through' : 'text-red-200'}`}>
                             {req.issue}
                           </p>
-                          <p className="text-sm text-slate-500 mt-1">Location: {req.current_node || req.room_id} | Floor: {req.floor_id}</p>
-                          <p className="text-xs text-slate-600 mt-1">Requested at: {new Date(req.created_at).toLocaleTimeString()}</p>
+                          <p className="text-sm text-slate-500 mt-1 truncate">Location: {req.current_node || req.room_id} | Floor: {req.floor_id}</p>
+                          <p className="text-xs text-slate-600 mt-1 truncate">Requested at: {new Date(req.created_at).toLocaleTimeString()}</p>
                         </div>
                         {!isDone && (
-                          <button onClick={() => handleResolveHelp(req.id || req._id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0">
+                          <button onClick={() => handleResolveHelp(req.id || req._id)} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg font-bold text-sm transition-colors shrink-0 w-full sm:w-auto">
                             Resolve
                           </button>
                         )}

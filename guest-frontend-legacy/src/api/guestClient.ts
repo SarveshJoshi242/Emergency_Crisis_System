@@ -221,5 +221,16 @@ export const guestClient = {
       }),
     });
   },
+
+  /**
+   * Fetch active notifications (alerts and broadcast messages)
+   */
+  async getNotifications(floorId?: string): Promise<{ alerts: any[], messages: any[] }> {
+    const STAFF_BACKEND = import.meta.env.VITE_STAFF_BACKEND_URL ?? 'http://localhost:8001';
+    const url = floorId 
+      ? `${STAFF_BACKEND}/guest-api/notifications?floor_id=${encodeURIComponent(floorId)}`
+      : `${STAFF_BACKEND}/guest-api/notifications`;
+    return _fetch(url);
+  }
 };
 

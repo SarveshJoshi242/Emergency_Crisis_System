@@ -50,18 +50,17 @@ def main():
             # Trigger Logic (always fire if there is some detection)
             if fire_conf > 0 and time.time() > cooldown:
                 payload = {
-                    "type": "fire",
                     "room_id": args.room,
-                    "floor": args.floor,
-                    "risk_level": "MEDIUM",
+                    "floor_id": args.floor,
+                    "risk": "medium",
                     "confidence": 0.80,
                     "source": "yolo_test"
                 }
                 
                 try:
-                    res = requests.post(f"{args.backend}/alerts", json=payload)
+                    res = requests.post(f"{args.backend}/alerts/fire-detection", json=payload)
                     if res.status_code in (200, 201):
-                        print("→ Alert Sent ✅")
+                        print("→ AI Alert Sent (Pending Staff Confirmation) ✅")
                         cooldown = time.time() + 10  # 10s cooldown to avoid spamming
                     else:
                         print(f"→ Failed to send alert ❌ (Status {res.status_code}: {res.text})")

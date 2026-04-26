@@ -71,11 +71,12 @@ export default function FloorMapPanel({ floors, onRefresh }) {
             />
           </div>
           <div>
-            <label className="label">Floor Plan Image (optional)</label>
+            <label className="label">Floor Plan Image (required)</label>
             <input
               id="input-floor-image"
               type="file"
               accept="image/*"
+              required
               className="text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-slate-700 file:text-slate-300 hover:file:bg-slate-600 cursor-pointer w-full"
               onChange={e => setImageFile(e.target.files[0] || null)}
             />
@@ -91,7 +92,7 @@ export default function FloorMapPanel({ floors, onRefresh }) {
         </form>
 
         {/* Floor list */}
-        <div className="space-y-2">
+        <div className="space-y-2 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
           {floors.length === 0 && (
             <p className="text-slate-500 text-sm text-center py-4">No floors yet</p>
           )}

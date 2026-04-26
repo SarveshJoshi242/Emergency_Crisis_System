@@ -82,12 +82,23 @@ async def create_auto_alert(
     """
     col = get_collection("alerts")
 
-    existing = await col.find_one(
+    existing_event = await col.find_one(
         {"fire_event_id": fire_event_id, "status": "ACTIVE"}
     )
-    if existing:
+    if existing_event:
         logger.debug("Alert for fire_event_id=%s already exists — skipping", fire_event_id)
         return None  # already handled
+        
+    # Deduplicate by room/floor to prevent duplicate active alerts if multiple sensors/AI detections trigger
+    room_filter = {"source_room": source_room} if source_room else {}
+    existing_alert = await col.find_one({
+        "floor_id": floor_id,
+        "status": "ACTIVE",
+        **room_filter
+    })
+    if existing_alert:
+        logger.debug("Active alert already exists for floor=%s room=%s — skipping", floor_id, source_room)
+        return None
 
     location = f"Room {source_room}" if source_room else f"Floor {floor_id}"
     auto_message = message or f"Auto-alert: {risk_level} risk detected on {location}"

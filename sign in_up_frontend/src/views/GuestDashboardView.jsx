@@ -11,11 +11,13 @@ export default function GuestDashboardView({ session, onExit }) {
   const [emergency,     setEmergency]     = useState(null)
   const [currentStep,   setCurrentStep]   = useState(0)
   const [safe,          setSafe]          = useState(false)
+  const [safeConfirmedAnim, setSafeConfirmedAnim] = useState(false)
   const [helpSent,      setHelpSent]      = useState(false)
   const [helpLoading,   setHelpLoading]   = useState(false)
   const [confirmLoading,setConfirmLoading]= useState(false)
   const [lastUpdated,   setLastUpdated]   = useState(null)
   const [error,         setError]         = useState('')
+  const [notifications, setNotifications] = useState([])
 
   // ── Polling ───────────────────────────────────────────────
   const poll = useCallback(async () => {
@@ -40,6 +42,48 @@ export default function GuestDashboardView({ session, onExit }) {
     return () => clearInterval(id)
   }, [poll])
 
+  // ── WebSocket for Real-time Notifications ─────────────────
+  useEffect(() => {
+    // We connect to the Staff backend WS to receive broadcast messages and help resolutions
+    const WS_URL = import.meta.env.VITE_STAFF_WS_URL || 'ws://localhost:8001/ws/live'
+    const ws = new WebSocket(WS_URL)
+    
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        
+        if (msg.event === 'help_resolved' && msg.data.session_id === session_id) {
+          setNotifications(prev => [...prev, {
+            id: Date.now(),
+            type: 'success',
+            text: '✅ Staff has resolved your help request. Assistance is on the way.'
+          }])
+          setHelpSent(false) // reset button so they can ask again if needed
+        } else if (msg.event === 'broadcast_message') {
+          setNotifications(prev => [...prev, {
+            id: msg.data.id || Date.now(),
+            type: msg.data.priority,
+            text: `📢 ${msg.data.message}`
+          }])
+        } else if (msg.event === 'route_update') {
+          setNotifications(prev => [...prev, {
+            id: Date.now(),
+            type: 'warning',
+            text: `⚠️ ${msg.data.message || 'Route blocked. Please follow updated instructions.'}`
+          }])
+        }
+      } catch (e) {
+        console.error('WS parse error:', e)
+      }
+    }
+    
+    return () => ws.close()
+  }, [session_id])
+
+  const dismissNotification = (id) => {
+    setNotifications(prev => prev.filter(n => n.id !== id))
+  }
+
   async function handleHelp() {
     setHelpLoading(true)
     try {
@@ -53,7 +97,10 @@ export default function GuestDashboardView({ session, onExit }) {
     setConfirmLoading(true)
     try {
       await confirmSafe(session_id, steps[steps.length - 1]?.node || 'exit')
-      setSafe(true)
+      setSafeConfirmedAnim(true)
+      setTimeout(() => {
+        setSafe(true)
+      }, 1500)
     } catch { /* non-fatal */ }
     finally { setConfirmLoading(false) }
   }
@@ -82,22 +129,22 @@ export default function GuestDashboardView({ session, onExit }) {
       </div>
 
       {/* Header */}
-      <header className="glass border-b border-slate-800 px-6 py-3 flex items-center justify-between">
-        <div>
-          <h1 className="font-bold text-white text-sm">Guest Evacuation</h1>
-          <p className="text-slate-500 text-xs">Room {room_id} · Floor {floor_id || '—'}</p>
+      <header className="glass border-b border-slate-800 px-4 md:px-6 py-3 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="font-bold text-white text-sm truncate">Guest Evacuation</h1>
+          <p className="text-slate-500 text-xs truncate">Room {room_id} · Floor {floor_id || '—'}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {lastUpdated && (
-            <span className="text-xs text-slate-500">
+            <span className="text-[10px] md:text-xs text-slate-500 hidden sm:inline">
               Updated {lastUpdated.toLocaleTimeString()}
             </span>
           )}
-          <button id="btn-guest-exit" onClick={onExit} className="btn-ghost text-xs px-3 py-1.5">Exit</button>
+          <button id="btn-guest-exit" onClick={onExit} className="btn-ghost text-xs px-2 md:px-3 py-1.5">Exit</button>
         </div>
       </header>
 
-      <main className="flex-1 p-6 max-w-2xl mx-auto w-full space-y-6">
+      <main className="flex-1 p-4 md:p-6 max-w-2xl mx-auto w-full space-y-4 md:space-y-6 overflow-x-hidden">
         {/* Session info */}
         <div className="card-sm flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
           <span>Session: <code className="text-slate-300">{session_id?.slice(0, 16)}…</code></span>
@@ -208,30 +255,62 @@ export default function GuestDashboardView({ session, onExit }) {
                 <button
                   id="btn-confirm-safe"
                   onClick={handleSafe}
-                  disabled={confirmLoading}
-                  className="btn-success flex-1 disabled:opacity-50"
+                  disabled={confirmLoading || safeConfirmedAnim}
+                  className={`flex-1 px-4 py-3 rounded-xl font-bold transition-all duration-300 disabled:opacity-50 ${
+                    safeConfirmedAnim 
+                      ? 'bg-emerald-500 text-white shadow-[0_0_20px_rgba(16,185,129,0.5)] border border-emerald-400' 
+                      : 'btn-success'
+                  }`}
                 >
-                  {confirmLoading ? 'Confirming…' : '✅ I am Safe'}
+                  {safeConfirmedAnim ? '✅ Status Confirmed!' : confirmLoading ? 'Confirming…' : '✅ I am Safe'}
                 </button>
               )}
             </div>
           )}
         </div>
 
-        {/* Help request */}
-        <div className="card-sm flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-white">Need Assistance?</p>
-            <p className="text-xs text-slate-400">Alert staff to your location</p>
+        {/* Bottom Widgets */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Help request */}
+          <div className="card-sm flex flex-col justify-between gap-4 h-full">
+            <div>
+              <p className="text-sm font-medium text-white">Need Assistance?</p>
+              <p className="text-xs text-slate-400">Alert staff to your location</p>
+            </div>
+            <button
+              id="btn-request-help"
+              onClick={handleHelp}
+              disabled={helpSent || helpLoading}
+              className={`w-full ${helpSent ? 'btn-ghost opacity-70 cursor-not-allowed' : 'btn-danger'}`}
+            >
+              {helpSent ? '⏳ Waiting for staff response' : helpLoading ? 'Sending…' : '🆘 Help!'}
+            </button>
           </div>
-          <button
-            id="btn-request-help"
-            onClick={handleHelp}
-            disabled={helpSent || helpLoading}
-            className={helpSent ? 'btn-ghost opacity-50 cursor-not-allowed' : 'btn-danger'}
-          >
-            {helpSent ? '✅ Help Requested' : helpLoading ? 'Sending…' : '🆘 Help!'}
-          </button>
+
+          {/* Broadcast Messages */}
+          <div className="card-sm flex flex-col gap-3 h-full overflow-hidden">
+            <div>
+              <p className="text-sm font-medium text-white">Live Updates</p>
+              <p className="text-xs text-slate-400">Messages from staff</p>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar min-h-[60px] max-h-[120px]">
+              {notifications.length === 0 ? (
+                <p className="text-xs text-slate-500 italic flex h-full items-center justify-center">No new messages</p>
+              ) : (
+                notifications.map(n => (
+                  <div key={n.id} className={`p-2 rounded-lg text-xs font-medium flex items-start gap-2 border ${
+                    n.type === 'critical' || n.type === 'danger' || n.type === 'info' ? 'bg-red-950/30 text-red-200 border-red-900/50' :
+                    n.type === 'warning' ? 'bg-yellow-950/30 text-yellow-200 border-yellow-900/50' :
+                    n.type === 'success' ? 'bg-emerald-950/30 text-emerald-200 border-emerald-900/50' :
+                    'bg-red-950/30 text-red-200 border-red-900/50'
+                  }`}>
+                    <span className="flex-1">{n.text}</span>
+                    <button onClick={() => dismissNotification(n.id)} className="opacity-50 hover:opacity-100 shrink-0 font-bold">✕</button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </main>
     </div>

@@ -16,6 +16,7 @@ export function EvacuationPage() {
   const { session } = useApp();
   const [routeBlocked, setRouteBlocked] = useState(false);
   const [blockedMessage, setBlockedMessage] = useState("");
+  const [broadcasts, setBroadcasts] = useState<any[]>([]);
 
   useEffect(() => {
     const el = document.createElement('style');
@@ -32,7 +33,7 @@ export function EvacuationPage() {
     if (!session) navigate('/check-in', { replace: true });
   }, [session, navigate]);
 
-  // WebSocket Connection for route_update
+  // WebSocket Connection for route_update and broadcast_message
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:8001/ws/live');
     ws.onmessage = (event) => {
@@ -42,6 +43,9 @@ export function EvacuationPage() {
           setRouteBlocked(true);
           setBlockedMessage(msg.data.message || "Route blocked. Use alternate stairs.");
           if ('vibrate' in navigator) navigator.vibrate([500, 200, 500]);
+        } else if (msg.event === 'broadcast_message') {
+          setBroadcasts(prev => [msg.data, ...prev]);
+          if ('vibrate' in navigator) navigator.vibrate([300, 100, 300]);
         }
       } catch (e) {
         console.error(e);
@@ -49,6 +53,19 @@ export function EvacuationPage() {
     };
     return () => ws.close();
   }, []);
+
+  // Fetch existing active broadcasts on mount
+  useEffect(() => {
+    if (session?.floor_id) {
+      guestClient.getNotifications(session.floor_id)
+        .then(data => {
+          if (data.messages && data.messages.length > 0) {
+            setBroadcasts(data.messages);
+          }
+        })
+        .catch(err => console.error("Failed to fetch notifications", err));
+    }
+  }, [session]);
 
   if (!session) return null;
 
@@ -67,6 +84,32 @@ export function EvacuationPage() {
           ⚠️ {blockedMessage}
         </div>
       )}
+
+      {/* BROADCAST MESSAGES */}
+      {broadcasts.map((b, idx) => (
+        <div key={b.id || idx} style={{ 
+          background: b.priority === 'critical' ? '#EF4444' : b.priority === 'warning' ? '#F59E0B' : '#3B82F6', 
+          color: 'white', 
+          padding: '15px', 
+          textAlign: 'center', 
+          fontWeight: 'bold', 
+          fontSize: '18px', 
+          borderBottom: '4px solid rgba(0,0,0,0.2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '10px'
+        }}>
+          <span>📢</span>
+          <span style={{ flex: 1 }}>{b.message}</span>
+          <button 
+            onClick={() => setBroadcasts(prev => prev.filter(x => x !== b))}
+            style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', borderRadius: '50%', width: '30px', height: '30px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          >
+            ✕
+          </button>
+        </div>
+      ))}
 
       {/* STEPS */}
       <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>

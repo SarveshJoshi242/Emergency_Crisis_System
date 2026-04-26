@@ -874,7 +874,6 @@ async def reroute(
 @router.post("/request-help")
 async def request_help(
     data: RequestHelpRequest,
-    _auth: dict = Depends(require_guest),            # 🔒 guest only
     session_service: GuestSessionService = Depends(get_guest_session_service),
     interaction_service: InteractionService = Depends(get_interaction_service),
     integration_service = Depends(get_integration_service)
@@ -944,7 +943,6 @@ async def request_help(
 @router.post("/reached-safe-zone")
 async def reached_safe_zone(
     data: SafeZoneConfirmationRequest,
-    _auth: dict = Depends(require_guest),            # 🔒 guest only
     session_service: GuestSessionService = Depends(get_guest_session_service),
     integration_service = Depends(get_integration_service)
 ):
