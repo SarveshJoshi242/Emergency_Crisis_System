@@ -3,7 +3,7 @@
 //  All HTTP calls to the Staff Backend (port 8001)
 // ============================================================
 
-const BASE = 'http://localhost:8001';
+const BASE = import.meta.env.VITE_STAFF_API_URL || 'http://localhost:8001';
 
 function getToken() {
   return localStorage.getItem('staff_access_token');
@@ -107,7 +107,8 @@ export const getStaff = () => request('GET', '/staff/');
 // ── WebSocket ─────────────────────────────────────────────────
 export function createStaffWebSocket(onMessage) {
   const token = getToken();
-  const ws = new WebSocket(`ws://localhost:8001/ws/live${token ? `?token=${token}` : ''}`);
+  const WS_BASE = import.meta.env.VITE_STAFF_WS_URL || 'ws://localhost:8001/ws/live';
+  const ws = new WebSocket(`${WS_BASE}${token ? `?token=${token}` : ''}`);
   ws.onmessage = (evt) => {
     try { onMessage(JSON.parse(evt.data)); }
     catch { onMessage(evt.data); }

@@ -3,7 +3,7 @@
 //  All HTTP calls to the Guest Backend (port 8000)
 // ============================================================
 
-const BASE = 'http://localhost:8000';
+const BASE = import.meta.env.VITE_GUEST_API_URL || 'http://localhost:8000';
 
 function getToken() {
   return sessionStorage.getItem('guest_access_token');
