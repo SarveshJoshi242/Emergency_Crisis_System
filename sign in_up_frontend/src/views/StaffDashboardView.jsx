@@ -627,8 +627,8 @@ export default function StaffDashboardView({ session, onLogout }) {
                 >
                   <option value="">Select a floor…</option>
                   {floors.map(f => (
-                    <option key={f.floor_id || f._id} value={f.floor_id || f._id}>
-                      {f.name || f.floor_id || f._id}
+                    <option key={f.id} value={f.id}>
+                      {f.name || f.floor_id || f.id}
                     </option>
                   ))}
                 </select>
