@@ -1,58 +1,73 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from services.websocket_manager import manager
+from services.fire_service import handle_fire_input
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/emergency", tags=["Emergency"])
 
+
 class EmergencyStart(BaseModel):
     room_id: str
     floor: str
-    type: str
+    type: str = "fire"
 
-class NotifyResponders(BaseModel):
-    type: str
-    location: str
-    severity: str
 
-@router.post("/start", summary="Start emergency evacuation")
+@router.post("/start", summary="Manually start emergency evacuation")
 async def start_emergency(body: EmergencyStart):
-    # 1. Update system state
-    # (In a real system, this updates DB state. We simulate by broadcasting)
-    logger.info(f"🚨 EMERGENCY STARTED: {body.type.upper()} in Room {body.room_id}")
+    """
+    Manually trigger a full emergency for a specific room and floor.
+    Goes through the same pipeline as YOLO fire detection:
+      - Creates DB alert (deduplication-aware)
+      - Syncs emergency_state (guest backend reads this)
+      - Generates Gemini AI tasks
+      - Broadcasts via WebSocket to all clients
+      - Sends SMS to all active guests with phone numbers
+    """
+    logger.warning(
+        "🚨 MANUAL EMERGENCY TRIGGERED | room=%s floor=%s type=%s",
+        body.room_id, body.floor, body.type
+    )
 
-    # 2. Trigger Responders
-    notify_payload = {
-        "type": body.type,
-        "location": f"Room {body.room_id}, Floor {body.floor}",
-        "severity": "medium"
+    # Build a fire_event payload that matches what the YOLO pipeline sends
+    payload = {
+        "floor_id":       body.floor,
+        "risk_level":     "HIGH",
+        "risk_score":     0.95,
+        "action":         "EVACUATE",
+        "density_label":  "high",
+        "density_value":  0.9,
+        "people_count":   10,
+        "fire_conf":      0.95,
+        "movement_score": 0.8,
+        "source_room":    body.room_id,
+        "scope":          "room",
+        "danger_zones":   [body.room_id],
+        "override_message": (
+            f"MANUAL ALERT: {body.type.upper()} emergency declared in "
+            f"Room {body.room_id} on Floor {body.floor}. "
+            "Immediate evacuation required."
+        ),
     }
-    # Here we would actually call the endpoint, but we can just call the logic
-    await notify_responders(NotifyResponders(**notify_payload))
 
-    # 3. Broadcast to guests
-    await manager.broadcast("evacuation_started", {
+    try:
+        result = await handle_fire_input(payload)
+    except Exception as e:
+        logger.error("Manual emergency pipeline failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Emergency pipeline error: {e}")
+
+    return {
+        "status": "EVACUATION ACTIVE",
         "room_id": body.room_id,
         "floor": body.floor,
-        "type": body.type
-    })
-    
-    # 4. Generate Staff Tasks
-    # We broadcast tasks to staff UI
-    tasks = [
-        f"Go to Room {body.room_id} and check the situation",
-        "Guide guests towards nearest exit",
-        "Ensure corridors are clear",
-        "Assist anyone needing help"
-    ]
-    await manager.broadcast("task_assigned", {"tasks": tasks})
+        "alert_created": result.get("alert_created", False),
+        "fire_event_id": result.get("id"),
+    }
 
-    return {"status": "EVACUATION ACTIVE"}
 
 @router.post("/notify-responders", summary="Trigger responders (n8n ready)")
-async def notify_responders(body: NotifyResponders):
-    # Just log for now. n8n webhook can be plugged here later.
-    logger.info(f"🚨 Responders notified: {body.type.upper()} at {body.location} (Severity: {body.severity})")
+async def notify_responders(body: dict):
+    logger.info("Responders notified: %s", body)
     return {"status": "Responders notified"}

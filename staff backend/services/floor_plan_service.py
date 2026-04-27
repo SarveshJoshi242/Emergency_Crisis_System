@@ -128,17 +128,39 @@ async def delete_floor(floor_id: str) -> bool:
 
 
 async def get_floor_graph(floor_id: str) -> Optional[dict]:
-    """Return only the graph sub-document for a floor."""
+    """Return only the graph sub-document for a floor.
+    Accepts either a MongoDB ObjectId string OR a floor_id slug (e.g. 'third_floor').
+    """
     col = get_collection(FLOORS_COL)
-    oid = _safe_object_id(floor_id)
-    doc = await col.find_one({"_id": oid})
+
+    # Try ObjectId lookup first; fall back to floor_id slug search
+    doc = None
+    try:
+        oid = ObjectId(floor_id)
+        doc = await col.find_one({"_id": oid})
+    except (InvalidId, TypeError):
+        pass
+
+    if not doc:
+        # Slug match — case-insensitive to handle "Third Floor" vs "third_floor"
+        doc = await col.find_one({
+            "$or": [
+                {"floor_id": floor_id},
+                {"floor_id": floor_id.lower().replace(" ", "_")},
+                {"name": floor_id},
+            ]
+        })
+
     if not doc:
         return None
+
     graph = doc.get("graph") or {"nodes": [], "edges": []}
     return {
         "floor_id": floor_id,
         "name": doc.get("name"),
         "image_url": doc.get("image_url"),
+        "nodes": graph.get("nodes", []),
+        "edges": graph.get("edges", []),
         "graph": graph,
     }
 

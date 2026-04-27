@@ -66,10 +66,26 @@ async def _send_guest_sms_alerts(floor_id: str, risk_level: str) -> None:
 
 
 async def _get_floor_name(floor_id: str) -> str:
-    """Fetch floor name from DB for Gemini context. Falls back to floor_id."""
+    """Fetch floor name from DB for Gemini context. Falls back to floor_id.
+    Accepts both ObjectId strings and floor_id slugs/names.
+    """
     try:
         col = get_collection("floors")
-        doc = await col.find_one({"_id": ObjectId(floor_id)}, {"name": 1})
+        doc = None
+        # Try ObjectId first
+        try:
+            doc = await col.find_one({"_id": ObjectId(floor_id)}, {"name": 1})
+        except Exception:
+            pass
+        # Fall back to slug / name match
+        if not doc:
+            doc = await col.find_one({
+                "$or": [
+                    {"floor_id": floor_id},
+                    {"floor_id": floor_id.lower().replace(" ", "_")},
+                    {"name": floor_id},
+                ]
+            }, {"name": 1})
         return doc["name"] if doc else floor_id
     except Exception:
         return floor_id

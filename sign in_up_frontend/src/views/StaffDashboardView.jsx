@@ -3,7 +3,7 @@ import {
   getAlerts, resolveAlert, resolveAllAlerts, listFloors,
   staffLogout, getMe, createStaffWebSocket, triggerDemo, startEmergency, getGuestSessions,
   broadcastMessage, getHelpRequests, resolveHelpRequest, getTasks, completeTask,
-  getPendingAIAlerts, confirmAIAlert, dismissAIAlert, callResponders
+  getPendingAIAlerts, confirmAIAlert, dismissAIAlert, callResponders, getFloorGraph
 } from '../api/staffApi'
 import FloorMapPanel from './staff/FloorMapPanel'
 
@@ -22,6 +22,13 @@ export default function StaffDashboardView({ session, onLogout }) {
 
   // Tabs: overview, tasks, help, floors, map, ai
   const [activeTab, setActiveTab] = useState('overview')
+
+  // Manual emergency trigger modal
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false)
+  const [emergModalFloor,    setEmergModalFloor]    = useState('')
+  const [emergModalRoom,     setEmergModalRoom]     = useState('')
+  const [emergModalRooms,    setEmergModalRooms]    = useState([])   // rooms for selected floor
+  const [emergModalLoading,  setEmergModalLoading]  = useState(false)
 
   const wsRef = useRef(null)
   
@@ -180,6 +187,41 @@ export default function StaffDashboardView({ session, onLogout }) {
     }
   }
 
+  async function handleTriggerEmergency() {
+    if (!emergModalFloor || !emergModalRoom) return
+    if (!window.confirm(`Trigger EMERGENCY for room "${emergModalRoom}" on floor "${emergModalFloor}"? This will alert all guests and generate evacuation tasks.`)) return
+    setEmergModalLoading(true)
+    try {
+      await startEmergency(emergModalRoom, emergModalFloor, 'fire')
+      setShowEmergencyModal(false)
+      setEmergModalFloor('')
+      setEmergModalRoom('')
+      setEmergModalRooms([])
+      loadAll()
+      setActiveTab('tasks')
+    } catch (e) {
+      alert('Failed to trigger emergency: ' + e.message)
+    } finally {
+      setEmergModalLoading(false)
+    }
+  }
+
+  async function handleEmergModalFloorChange(floorId) {
+    setEmergModalFloor(floorId)
+    setEmergModalRoom('')
+    setEmergModalRooms([])
+    if (!floorId) return
+    try {
+      const data = await getFloorGraph(floorId)
+      // API returns nodes at top-level AND inside graph — handle both
+      const allNodes = data?.nodes || data?.graph?.nodes || []
+      const rooms = allNodes.filter(n => n.type === 'room')
+      setEmergModalRooms(rooms)
+    } catch {
+      setEmergModalRooms([])
+    }
+  }
+
   const sortedAlerts = [...activeAlerts, ...pendingAIAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
   const sortedAIAlerts = [...pendingAIAlerts].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 
@@ -205,8 +247,12 @@ export default function StaffDashboardView({ session, onLogout }) {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
             Floor Maps
           </button>
-          <button onClick={loadAll} className="p-2 border border-slate-700 hover:bg-slate-800 text-slate-300 rounded-lg transition-colors">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          <button
+            onClick={() => setShowEmergencyModal(true)}
+            className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded-lg transition-colors text-sm font-bold border border-orange-500"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+            Trigger Emergency
           </button>
           <button onClick={handleLogout} className="flex items-center gap-2 border border-slate-700 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg transition-colors text-sm font-medium">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
@@ -552,6 +598,84 @@ export default function StaffDashboardView({ session, onLogout }) {
 
         </div>
       </main>
+
+      {/* TRIGGER EMERGENCY MODAL */}
+      {showEmergencyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-[#0F1523] border border-orange-800/50 rounded-2xl p-6 w-full max-w-md shadow-[0_0_40px_rgba(234,88,12,0.2)]">
+            {/* Modal Header */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 rounded-xl bg-orange-500/20 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-white font-bold text-lg">Trigger Emergency</h2>
+                <p className="text-slate-400 text-xs">Manually start an evacuation for a specific room</p>
+              </div>
+            </div>
+
+            {/* Floor Select */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Floor</label>
+                <select
+                  className="w-full bg-[#1E293B] border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500"
+                  value={emergModalFloor}
+                  onChange={e => handleEmergModalFloorChange(e.target.value)}
+                >
+                  <option value="">Select a floor…</option>
+                  {floors.map(f => (
+                    <option key={f.floor_id || f._id} value={f.floor_id || f._id}>
+                      {f.name || f.floor_id || f._id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Room Dropdown */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Room</label>
+                <select
+                  className="w-full bg-[#1E293B] border border-slate-700 text-white rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 disabled:opacity-40"
+                  value={emergModalRoom}
+                  onChange={e => setEmergModalRoom(e.target.value)}
+                  disabled={!emergModalFloor || emergModalRooms.length === 0}
+                >
+                  <option value="">
+                    {!emergModalFloor ? 'Select a floor first…' : emergModalRooms.length === 0 ? 'Loading rooms…' : 'Select a room…'}
+                  </option>
+                  {emergModalRooms.map(n => (
+                    <option key={n.id} value={n.id}>{n.label || n.id}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => { setShowEmergencyModal(false); setEmergModalFloor(''); setEmergModalRoom(''); setEmergModalRooms([]) }}
+                className="flex-1 px-4 py-2.5 border border-slate-700 text-slate-300 hover:bg-slate-800 rounded-xl text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTriggerEmergency}
+                disabled={!emergModalFloor || !emergModalRoom || emergModalLoading}
+                className="flex-1 px-4 py-2.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-sm font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {emergModalLoading ? (
+                  <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg> Triggering…</>
+                ) : (
+                  <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg> Trigger Emergency</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )
