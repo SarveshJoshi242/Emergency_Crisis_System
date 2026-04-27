@@ -10,10 +10,15 @@ from pathlib import Path
 # ── Load .env file BEFORE any other imports ────────────────────────────────
 # This must happen before importing config and auth modules
 from dotenv import load_dotenv
-env_path = Path(__file__).parent.parent.parent / ".env"
-if not env_path.exists():
-    env_path = Path(__file__).parent.parent / "env"
-load_dotenv(env_path)
+# Try multiple .env locations — works both locally and on Render
+for _env_candidate in [
+    Path(__file__).parent.parent / ".env",          # guest_backend/.env
+    Path(__file__).parent.parent / "env",            # guest_backend/env
+    Path(__file__).parent.parent.parent / ".env",   # repo root/.env
+]:
+    if _env_candidate.exists():
+        load_dotenv(_env_candidate)
+        break
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,13 +29,14 @@ import logging
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection, attach_db_to_app
 
-# ── Auth module path (fallback for direct `uvicorn app.main:app` launches) ───
-# run.py already sets PYTHONPATH for --reload subprocesses.
-# This block handles direct invocation without run.py.
+# ── Auth module path ─────────────────────────────────────────────────────────
+# On Render: repo root is 2 levels up from app/ (app -> guest_backend -> repo root)
+# Locally: same structure, PYTHONPATH may already have it via start_all.ps1
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_WORKSPACE_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", ".."))
-if _WORKSPACE_ROOT not in sys.path:
-    sys.path.insert(0, _WORKSPACE_ROOT)
+_REPO_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))  # guest_backend/app/../../ = repo root
+for _p in [_REPO_ROOT]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from auth.routes import guest_auth_router as auth_router  # noqa: E402  — guest-only (no staff login/register)
 
