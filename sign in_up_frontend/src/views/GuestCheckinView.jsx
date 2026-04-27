@@ -27,16 +27,19 @@ export default function GuestCheckinView({ onCheckin, onBack }) {
   async function handleCheckin(e) {
     e.preventDefault()
     if (!roomId) return
+    const digits = phone.replace(/\D/g, '')
+    if (digits.length !== 10) { setError('Enter a valid 10-digit Indian mobile number.'); return }
+    const fullPhone = `+91${digits}`
     setError('')
     setLoading(true)
     try {
-      // 1. Public check-in → creates session
-      const sessionData = await checkIn(roomId)
+      // 1. Public check-in → creates session (with phone for SMS alerts)
+      const sessionData = await checkIn(roomId, fullPhone)
 
       // 2. JWT auth check-in (optional — gets tokens)
       let tokens = {}
       try {
-        tokens = await guestCheckin(roomId, phone || null)
+        tokens = await guestCheckin(roomId, fullPhone)
       } catch {
         // Non-fatal — session still works without JWT for public endpoints
       }
@@ -45,6 +48,7 @@ export default function GuestCheckinView({ onCheckin, onBack }) {
         session_id:    sessionData.session_id,
         room_id:       sessionData.room_id || roomId,
         floor_id:      sessionData.floor_id,
+        phone:         fullPhone,
         access_token:  tokens.access_token,
         refresh_token: tokens.refresh_token,
       })
@@ -124,17 +128,26 @@ export default function GuestCheckinView({ onCheckin, onBack }) {
               )}
             </div>
 
-            {/* Phone (optional) */}
+            {/* Phone (required) */}
             <div>
-              <label className="label">Phone Number <span className="text-slate-600">(optional)</span></label>
-              <input
-                id="input-phone"
-                type="tel"
-                className="input"
-                placeholder="+91 9876543210"
-                value={phone}
-                onChange={e => setPhone(e.target.value)}
-              />
+              <label className="label">Mobile Number <span className="text-red-400">*</span></label>
+              <div className="flex">
+                <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-700 bg-slate-800 text-slate-400 text-sm font-mono select-none">
+                  +91
+                </span>
+                <input
+                  id="input-phone"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={10}
+                  className="input rounded-l-none flex-1"
+                  placeholder="9876543210"
+                  value={phone}
+                  onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  required
+                />
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Required for emergency SMS alerts</p>
             </div>
 
             {error && (
@@ -146,7 +159,7 @@ export default function GuestCheckinView({ onCheckin, onBack }) {
             <button
               id="btn-submit-checkin"
               type="submit"
-              disabled={loading || !roomId}
+              disabled={loading || !roomId || phone.replace(/\D/g, '').length !== 10}
               className="btn-primary w-full py-3 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? 'Checking in…' : '🚪 Check In'}

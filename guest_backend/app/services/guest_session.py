@@ -32,6 +32,7 @@ class GuestSessionService:
         self,
         room_id: str,
         floor_id: str,
+        phone_number: Optional[str] = None,
     ) -> GuestSessionResponse:
         """
         Create a new guest session.
@@ -46,6 +47,7 @@ class GuestSessionService:
             "session_id":   session_id,
             "room_id":      room_id,
             "floor_id":     floor_id,
+            "phone_number": phone_number,
             "current_node": room_id,
             "status":       SessionStatus.ACTIVE.value,
             "created_at":   now,

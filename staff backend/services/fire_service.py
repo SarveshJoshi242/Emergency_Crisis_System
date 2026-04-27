@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 from bson import ObjectId
+import httpx
 from database import get_collection
 from services.alert_service import create_auto_alert
 from services.task_service import generate_tasks
@@ -15,8 +16,56 @@ from services.gemini_service import format_alert_message
 
 logger = logging.getLogger(__name__)
 
+# n8n webhook for guest emergency SMS alerts
+GUEST_SMS_WEBHOOK = "https://sarveshj27.app.n8n.cloud/webhook/emergency-alert"
+
 # MVP trigger rule: only HIGH or CRITICAL creates an alert
 ALERT_TRIGGER_LEVELS = {"HIGH", "CRITICAL"}
+
+
+async def _send_guest_sms_alerts(floor_id: str, risk_level: str) -> None:
+    """
+    Query the shared guest_sessions collection for all ACTIVE guests who
+    have a phone number, then fire the n8n SMS webhook once per unique number.
+    Non-fatal: errors are logged but do not interrupt the emergency pipeline.
+    """
+    try:
+        col = get_collection("guest_sessions")
+        # Fetch all active sessions across the property (not just 1 floor)
+        # so every checked-in guest gets notified
+        cursor = col.find(
+            {"status": {"$in": ["active", "evacuating"]}, "phone_number": {"$exists": True, "$ne": None}},
+            {"phone_number": 1, "room_id": 1}
+        )
+        recipients = []
+        async for doc in cursor:
+            phone = (doc.get("phone_number") or "").strip()
+            if phone and phone not in recipients:
+                recipients.append(phone)
+
+        if not recipients:
+            logger.info("SMS alert: no guests with phone numbers found — skipping")
+            return
+
+        message = (
+            f"🚨 EMERGENCY ALERT: {risk_level} risk detected at Hotel Sunshine. "
+            "Please evacuate immediately using the app guidance. Follow all staff instructions."
+        )
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                GUEST_SMS_WEBHOOK,
+                json={"message": message, "recipients": recipients},
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            logger.warning(
+                "SMS alerts sent | recipients=%d level=%s status=%s",
+                len(recipients), risk_level, resp.status_code
+            )
+    except Exception as e:
+        logger.error("SMS alert webhook failed (non-fatal): %s", e)
+
 
 
 async def _get_floor_name(floor_id: str) -> str:
@@ -143,6 +192,9 @@ async def handle_fire_input(payload: dict) -> dict:
                 f"room={source_room or 'N/A'} level={payload['risk_level']} "
                 f"scope={scope} alert_id={alert['id']}"
             )
+
+            # ── Send SMS alerts to all active guests with phone numbers ──────────
+            await _send_guest_sms_alerts(payload["floor_id"], payload["risk_level"])
 
     event_doc["alert_created"] = alert_created
     return event_doc

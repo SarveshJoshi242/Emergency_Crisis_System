@@ -60,6 +60,7 @@ async def check_in(data: dict):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="room_id is required"
         )
+    phone_number: Optional[str] = (data.get("phone_number") or "").strip() or None
 
     db = get_db()
 
@@ -101,6 +102,7 @@ async def check_in(data: dict):
         session = await session_service.create_session(
             room_id=room_id,
             floor_id=floor_id,
+            phone_number=phone_number,
         )
     except Exception as e:
         logger.error("check-in: session creation failed: %s", e)

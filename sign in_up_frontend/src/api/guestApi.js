@@ -44,8 +44,8 @@ export const getGuestMe = () => request('GET', '/auth/me');
 export const listRooms = () => request('GET', '/guest/rooms');
 
 // ── Check-in (public, creates session) ───────────────────────
-export const checkIn = (room_id) =>
-  request('POST', '/guest/check-in', { room_id });
+export const checkIn = (room_id, phone_number = null) =>
+  request('POST', '/guest/check-in', { room_id, phone_number });
 
 // ── Evacuation path (public — polling) ───────────────────────
 export const getEvacuationPath = (session_id) =>
