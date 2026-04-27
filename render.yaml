@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: emergency-crisis-system
+    runtime: python
+    rootDir: staff backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONPATH
+        value: /opt/render/project/src
