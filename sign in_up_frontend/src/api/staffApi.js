@@ -48,7 +48,8 @@ export const getAlerts = () => request('GET', '/alert/status');
 export const resolveAlert = (id) => request('POST', '/alert/resolve', { alert_id: id });
 export const resolveAllAlerts = () => request('POST', '/alert/resolve-all');
 export const triggerDemo = () => request('POST', '/alert/demo');
-export const startEmergency = (roomId, floor, type) => request('POST', '/emergency/start', { room_id: roomId, floor, type });
+export const startEmergency = (roomId, floorId, severity = 'high') =>
+  request('POST', '/staff/emergency/trigger-room', { floor_id: floorId, room_id: roomId, severity, message: `Manual emergency triggered for room ${roomId}` });
 
 // ── AI Fire Alerts ───────────────────────────────────────────
 export const getPendingAIAlerts = () => request('GET', '/alerts/ai-pending');

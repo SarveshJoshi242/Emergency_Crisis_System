@@ -192,7 +192,7 @@ export default function StaffDashboardView({ session, onLogout }) {
     if (!window.confirm(`Trigger EMERGENCY for room "${emergModalRoom}" on floor "${emergModalFloor}"? This will alert all guests and generate evacuation tasks.`)) return
     setEmergModalLoading(true)
     try {
-      await startEmergency(emergModalRoom, emergModalFloor, 'fire')
+      await startEmergency(emergModalRoom, emergModalFloor, 'high')
       setShowEmergencyModal(false)
       setEmergModalFloor('')
       setEmergModalRoom('')
