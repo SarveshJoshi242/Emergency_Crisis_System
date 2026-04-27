@@ -47,10 +47,7 @@ async def _send_guest_sms_alerts(floor_id: str, risk_level: str) -> None:
             logger.info("SMS alert: no guests with phone numbers found — skipping")
             return
 
-        message = (
-            f"🚨 EMERGENCY ALERT: {risk_level} risk detected at Hotel Sunshine. "
-            "Please evacuate immediately using the app guidance. Follow all staff instructions."
-        )
+        message = "Fire detected. Please evacuate immediately using the app guidance"
 
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
