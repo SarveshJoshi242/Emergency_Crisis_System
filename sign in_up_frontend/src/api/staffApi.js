@@ -44,10 +44,10 @@ export const staffLogout = (refresh_token) =>
 export const getMe = () => request('GET', '/auth/me');
 
 // ── Alerts ───────────────────────────────────────────────────
-export const getAlerts = () => request('GET', '/alerts/status');
-export const resolveAlert = (id) => request('POST', '/alerts/resolve', { alert_id: id });
-export const resolveAllAlerts = () => request('POST', '/alerts/resolve-all');
-export const triggerDemo = () => request('POST', '/alerts/demo');
+export const getAlerts = () => request('GET', '/alert/status');
+export const resolveAlert = (id) => request('POST', '/alert/resolve', { alert_id: id });
+export const resolveAllAlerts = () => request('POST', '/alert/resolve-all');
+export const triggerDemo = () => request('POST', '/alert/demo');
 export const startEmergency = (roomId, floor, type) => request('POST', '/emergency/start', { room_id: roomId, floor, type });
 
 // ── AI Fire Alerts ───────────────────────────────────────────
@@ -56,7 +56,7 @@ export const confirmAIAlert = (id) => request('POST', `/alerts/ai/${id}/confirm`
 export const dismissAIAlert = (id) => request('POST', `/alerts/ai/${id}/dismiss`);
 
 // ── Tasks ────────────────────────────────────────────────────
-export const getTasks = () => request('GET', '/tasks/');
+export const getTasks = () => request('GET', '/tasks');
 export const completeTask = (id) => request('POST', `/tasks/${id}/complete`);
 
 // ── Floors ───────────────────────────────────────────────────
