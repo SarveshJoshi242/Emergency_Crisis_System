@@ -28,11 +28,11 @@ build/
 .next/
 out/
 
-# Environment variables
+# Environment variables — real secrets, never commit
 .env
 .env.local
 .env.*.local
-.env.example
+# .env.example is intentionally tracked in git (no secrets, just template)
 
 # IDE
 .vscode/
